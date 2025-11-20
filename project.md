@@ -13,6 +13,21 @@ L'obiettivo di questo progetto è implementare un **sistema di illuminazione "sm
 
 Il sistema dovrà inoltre offrire **connettività Wi-Fi** per il monitoraggio e il controllo remoto, con l'ambizione di integrarsi con piattaforme di domotica esistenti (Google Home).
 
+### 1.1. Principi di Sviluppo Software
+
+Il progetto deve seguire rigorosamente i seguenti principi:
+
+* **Programmazione Orientata agli Oggetti (OOP):** Ogni componente hardware e logico deve essere incapsulato in classi dedicate con interfacce chiare.
+* **C++ Moderno:** Utilizzo di feature C++11/14/17 (dove supportato dall'Arduino Framework):
+  * `constexpr` per costanti compile-time
+  * `enum class` per type-safe enumerations
+  * Reference semantics (`const T&`) per evitare copie non necessarie
+  * Inizializzazione uniforme con `{}`
+  * `nullptr` invece di `NULL`
+* **No Allocazione Dinamica Non Necessaria:** Evitare `new`/`delete` e heap allocation quando possibile, preferendo oggetti stack-allocated e composizione.
+* **RAII (Resource Acquisition Is Initialization):** Gestione automatica delle risorse tramite costruttori/distruttori.
+* **Separazione Responsabilità:** Ogni classe ha una singola responsabilità ben definita (Single Responsibility Principle).
+
 ---
 
 ## 2. Specifiche della Piattaforma Hardware
@@ -24,7 +39,7 @@ Il progetto sarà basato sulla scheda di sviluppo **Wemos S3 Mini Pro**, che off
 | **Microcontrollore** | ESP32-S3FH4R2 | Controllo logico centrale, Wi-Fi, gestione I/O e periferiche. |
 | **Connettività** | 2.4 GHz Wi-Fi, Bluetooth LE | Connessione alla rete domestica, integrazione IoT/Web Server. |
 | **Memoria** | 4MB Flash, 2MB PSRAM | Archiviazione del firmware, gestione del buffer per il web server. |
-| **Display** | 0.85” 128x128 LCD TFT (GC9107/GC9A01) | Debug, visualizzazione dello stato di connessione e del livello di luce/movimento. |
+| **Display** | 0.85" 128x128 LCD TFT (ST7735) | Debug, visualizzazione dello stato di connessione e del livello di luce/movimento. **Nota:** Il display integrato è attualmente gestito con la libreria `Adafruit_ST7735`. Originariamente si prevedeva l'uso di `TFT_eSPI` con driver GC9107/GC9A01, ma tale migrazione è rimandata a fase successiva. |
 | **Sensore di Movimento** | 6D MEMS IMU (QMI8658C) | Rilevamento del movimento (accelerazione/rotazione) del robot. |
 | **GPIO Disponibili** | 12x IO, 3x Button (IO0, IO47, IO48) | Connessione a sensori esterni (BH1750) e attuatori (IRLZ44N/LED). |
 | **Periferiche** | ADC, DAC, I2C, SPI, UART, USB OTG | Interfaccia I2C utilizzata per la comunicazione con il BH1750. |
@@ -69,7 +84,7 @@ La logica del sistema si basa sulla fusione dei dati provenienti da due sensori:
 
 ## 5. Stack Software e Pianificazione dello Sviluppo
 
-Lo sviluppo avverrà tramite **PlatformIO** con l'**Arduino Framework**, sfruttando le librerie specifiche per le periferiche e la connettività.
+Lo sviluppo avverrà tramite **Arduino IDE** con l'**Arduino Framework**, sfruttando le librerie specifiche per le periferiche e la connettività.
 
 ### 5.1. Librerie Necessarie
 
@@ -86,8 +101,8 @@ Lo sviluppo avverrà tramite **PlatformIO** con l'**Arduino Framework**, sfrutta
 
 ### 5.2. Fasi di Sviluppo (Roadmap)
 
-1.  **Fase 1: Configurazione di Base (PlatformIO e I/O)**
-    * Configurazione del progetto PlatformIO per Wemos S3 Mini Pro.
+1.  **Fase 1: Configurazione di Base (Arduino IDE e I/O)**
+    * Configurazione del progetto Arduino IDE per Wemos S3 Mini Pro.
     * Test PWM sul pin del MOSFET (IRLZ44N).
     * Test di lettura dal BH1750 via I2C.
 2.  **Fase 2: Logica Sensori e Firmware Core**

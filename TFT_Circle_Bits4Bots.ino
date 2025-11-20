@@ -2,10 +2,13 @@
 #include <Adafruit_ST7735.h>     // Library for the ST7735 TFT screen
 #include <Adafruit_NeoPixel.h>   // RGB Led
 #include <SPI.h>
+#include <Wire.h>                // I2C library
 
 #include "bitmap.h"
 #include "Qmi8658c.h"
 #include "MotionDetector.h"
+#include "LightSensor.h"
+#include "LEDController.h"
 #include "config.h"
 
 // Create an instance of the display
@@ -28,6 +31,12 @@ qmi8658_cfg_t qmi8658_cfg = {
 
 // Motion detector instance
 MotionDetector motionDetector(&qmi8658c);
+
+// Light sensor instance (BH1750)
+LightSensor lightSensor(BH1750_ADDR);
+
+// LED strip controller instance
+LEDController ledController(LED_MOSFET_PIN, 0); // Use PWM channel 0
 
 void setup() {
 
@@ -90,12 +99,57 @@ void setup() {
 	Serial.println("====================================\n");
 	printCalibrationValues();
 	printInstructions();
+	
+	// Initialize Light Sensor (BH1750)
+	Serial.println("\n========== INITIALIZING LIGHT SENSOR ==========");
+	if (!lightSensor.begin(I2C_SDA, I2C_SCL)) {
+		Serial.println("ERROR: Failed to initialize BH1750!");
+		Serial.println("Check I2C connections and address");
+	} else {
+		Serial.println("BH1750 initialized successfully");
+		Serial.print("I2C SDA: GPIO"); Serial.println(I2C_SDA);
+		Serial.print("I2C SCL: GPIO"); Serial.println(I2C_SCL);
+		Serial.print("BH1750 Address: 0x"); Serial.println(BH1750_ADDR, HEX);
+		
+		// Read initial lux value
+		float lux = lightSensor.readLux();
+		Serial.print("Initial Light Level: "); Serial.print(lux); Serial.println(" lux");
+		Serial.print("Night Threshold: "); Serial.print(lightSensor.getNightThreshold()); Serial.println(" lux");
+	}
+	Serial.println("===============================================\n");
+	
+	// Initialize LED Controller
+	Serial.println("\n========== INITIALIZING LED CONTROLLER ==========");
+	if (!ledController.begin(5000, 8)) { // 5 kHz, 8-bit resolution
+		Serial.println("ERROR: Failed to initialize LED Controller!");
+	} else {
+		Serial.println("LED Controller initialized successfully");
+		Serial.print("MOSFET Pin: GPIO"); Serial.println(LED_MOSFET_PIN);
+		Serial.println("PWM Frequency: 5000 Hz");
+		Serial.println("PWM Resolution: 8-bit (0-255)");
+		
+		// Test LED with a quick blink
+		Serial.println("Testing LED... (quick blink)");
+		ledController.turnOn(255);
+		delay(300);
+		ledController.turnOff();
+		delay(300);
+		Serial.println("LED test complete");
+	}
+	Serial.println("=================================================\n");
 
 }
 
 void loop() {
   // Check for serial commands
   handleSerialCommands();
+  
+  // Read light level every 500ms
+  static unsigned long lastLightRead = 0;
+  if (millis() - lastLightRead > 500) {
+    float lux = lightSensor.readLux();
+    lastLightRead = millis();
+  }
   
   // Detect motion
   bool isMoving = motionDetector.detectMotion();
@@ -111,15 +165,16 @@ void loop() {
     } else if (digitalRead(BTN_L) == LOW) {
       Serial.println("\n[BLUE BTN] Printing statistics...");
       printStatistics();
+      printLightStatus();
       lastButtonPress = millis();
     } else if (digitalRead(BTN_C) == LOW) {
-      Serial.println("\n[GREEN BTN] Resetting statistics...");
-      motionDetector.resetStatistics();
+      Serial.println("\n[GREEN BTN] Testing LED...");
+      testLED();
       lastButtonPress = millis();
     }
   }
   
-  // Update LED based on motion (this should always reflect motion state)
+  // Update RGB LED based on motion (this should always reflect motion state)
   if (isMoving) {
     neopixelWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0); // Green = moving
   } else {
@@ -191,17 +246,44 @@ void printInstructions() {
   Serial.println("LED: RED=Stationary, GREEN=Moving");
   Serial.println("\nButtons:");
   Serial.println("  RED (BTN_R): Recalibrate baseline");
-  Serial.println("  BLUE (BTN_L): Show statistics");
-  Serial.println("  GREEN (BTN_C): Reset statistics");
+  Serial.println("  BLUE (BTN_L): Show statistics & light status");
+  Serial.println("  GREEN (BTN_C): Test LED strip");
   Serial.println("\nSerial Commands:");
   Serial.println("  a<value> - Set acc threshold (e.g., a0.05)");
   Serial.println("  g<value> - Set gyro threshold (e.g., g3.0)");
   Serial.println("  w<value> - Set motion window ms (e.g., w300)");
   Serial.println("  p<value> - Set pulse count needed (e.g., p2)");
+  Serial.println("  l<value> - Set night threshold lux (e.g., l10.0)");
+  Serial.println("  L<value> - Set LED brightness (e.g., L255)");
   Serial.println("  s - Show statistics");
   Serial.println("  c - Recalibrate");
   Serial.println("  h - Show this help");
   Serial.println("========================================\n");
+}
+
+void printLightStatus() {
+  Serial.println("\n--- Light Sensor Status ---");
+  Serial.print("Current Lux: "); Serial.print(lightSensor.getLastLux(), 1); Serial.println(" lux");
+  Serial.print("Night Threshold: "); Serial.print(lightSensor.getNightThreshold(), 1); Serial.println(" lux");
+  Serial.print("Is Night: "); Serial.println(lightSensor.isNight() ? "YES" : "NO");
+  Serial.print("Sensor Ready: "); Serial.println(lightSensor.isReady() ? "YES" : "NO");
+  Serial.println("---------------------------\n");
+}
+
+void testLED() {
+  Serial.println("LED Test Sequence:");
+  Serial.println("  25% brightness...");
+  ledController.setBrightness(64);
+  delay(500);
+  Serial.println("  50% brightness...");
+  ledController.setBrightness(128);
+  delay(500);
+  Serial.println("  100% brightness...");
+  ledController.setBrightness(255);
+  delay(500);
+  Serial.println("  Fading off...");
+  ledController.fadeTo(0, 1000);
+  Serial.println("LED Test Complete");
 }
 
 void handleSerialCommands() {
@@ -237,8 +319,27 @@ void handleSerialCommands() {
           Serial.print("MOTION_PULSE_COUNT set to: "); Serial.println(pulseCount);
         }
         break;
+      case 'l': // Light threshold
+        {
+          float threshold = Serial.parseFloat();
+          lightSensor.setNightThreshold(threshold);
+          Serial.print("NIGHT_THRESHOLD set to: "); Serial.print(threshold, 1); Serial.println(" lux");
+        }
+        break;
+      case 'L': // LED brightness
+        {
+          int brightness = Serial.parseInt();
+          if (brightness >= 0 && brightness <= 255) {
+            ledController.setBrightness(brightness);
+            Serial.print("LED brightness set to: "); Serial.println(brightness);
+          } else {
+            Serial.println("ERROR: Brightness must be 0-255");
+          }
+        }
+        break;
       case 's': // Show statistics
         printStatistics();
+        printLightStatus();
         break;
       case 'c': // Calibrate
         Serial.println("Recalibrating... keep still!");
