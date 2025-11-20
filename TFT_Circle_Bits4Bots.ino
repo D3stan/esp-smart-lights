@@ -9,6 +9,7 @@
 #include "MotionDetector.h"
 #include "LightSensor.h"
 #include "LEDController.h"
+#include "SmartLightController.h"
 #include "config.h"
 
 // Create an instance of the display
@@ -38,13 +39,16 @@ LightSensor lightSensor(BH1750_ADDR);
 // LED strip controller instance
 LEDController ledController(LED_MOSFET_PIN, 0); // Use PWM channel 0
 
+// Smart light controller instance (main logic)
+SmartLightController smartLight(motionDetector, lightSensor, ledController);
+
 void setup() {
 
 	Serial.begin(115200);
 
-  while (!Serial) { 
-    delay(10); 
-  }
+  //while (!Serial) { 
+  //  delay(10); 
+  //}
   
   Serial.println("Hello, I am using Native USB-CDC!");
 
@@ -137,6 +141,15 @@ void setup() {
 		Serial.println("LED test complete");
 	}
 	Serial.println("=================================================\n");
+	
+	// Initialize Smart Light Controller
+	Serial.println("\n========== INITIALIZING SMART LIGHT CONTROLLER ==========");
+	smartLight.begin(30000); // 30 seconds shutoff delay
+	Serial.println("Smart Light Controller initialized");
+	Serial.print("Auto Mode: "); Serial.println(smartLight.isAutoModeEnabled() ? "ENABLED" : "DISABLED");
+	Serial.print("Shutoff Delay: "); Serial.print(smartLight.getShutoffDelay() / 1000); Serial.println(" seconds");
+	Serial.println("Logic: LED ON when (Night AND Movement)");
+	Serial.println("=========================================================\n");
 
 }
 
@@ -154,6 +167,9 @@ void loop() {
   // Detect motion
   bool isMoving = motionDetector.detectMotion();
   
+  // Update smart light controller (main automatic logic)
+  smartLight.update();
+  
   // Button controls (check without blocking LED updates)
   static unsigned long lastButtonPress = 0;
   if (millis() - lastButtonPress > 500) { // Debounce buttons
@@ -166,6 +182,13 @@ void loop() {
       Serial.println("\n[BLUE BTN] Printing statistics...");
       printStatistics();
       printLightStatus();
+                bool currentBypass = smartLight.isLightSensorBypassed();
+          smartLight.setLightSensorBypass(!currentBypass);
+          Serial.print("Light sensor bypass: "); 
+          Serial.println(smartLight.isLightSensorBypassed() ? "ENABLED (always night)" : "DISABLED (normal)");
+          if (smartLight.isLightSensorBypassed()) {
+            Serial.println("*** Testing mode: LED control based on IMU ONLY ***");
+          }
       lastButtonPress = millis();
     } else if (digitalRead(BTN_C) == LOW) {
       Serial.println("\n[GREEN BTN] Testing LED...");
@@ -186,6 +209,13 @@ void loop() {
   if (millis() - lastPrint > 100) {
     printMotionStatus();
     lastPrint = millis();
+  }
+  
+  // Print smart light status (every 1000ms)
+  static unsigned long lastSmartPrint = 0;
+  if (millis() - lastSmartPrint > 1000) {
+    printSmartLightStatus();
+    lastSmartPrint = millis();
   }
   
   delay(20); // ~50 Hz loop rate
@@ -254,7 +284,13 @@ void printInstructions() {
   Serial.println("  w<value> - Set motion window ms (e.g., w300)");
   Serial.println("  p<value> - Set pulse count needed (e.g., p2)");
   Serial.println("  l<value> - Set night threshold lux (e.g., l10.0)");
-  Serial.println("  L<value> - Set LED brightness (e.g., L255)");
+  Serial.println("  L<value> - Set LED brightness (e.g., L255) [manual mode]");
+  Serial.println("  d<value> - Set shutoff delay seconds (e.g., d30)");
+  Serial.println("  A - Toggle auto mode (enable/disable)");
+  Serial.println("  B - Toggle light sensor bypass (test with IMU only)");
+  Serial.println("  O - Force LED ON (manual override)");
+  Serial.println("  F - Force LED OFF (manual override)");
+  Serial.println("  R - Return to auto mode");
   Serial.println("  s - Show statistics");
   Serial.println("  c - Recalibrate");
   Serial.println("  h - Show this help");
@@ -284,6 +320,33 @@ void testLED() {
   Serial.println("  Fading off...");
   ledController.fadeTo(0, 1000);
   Serial.println("LED Test Complete");
+}
+
+void printSmartLightStatus() {
+  Serial.print("[SMART] State:");
+  Serial.print(smartLight.getStateString());
+  Serial.print(" | AutoMode:");
+  Serial.print(smartLight.isAutoModeEnabled() ? "ON" : "OFF");
+  
+  if (smartLight.isLightSensorBypassed()) {
+    Serial.print(" | Night:BYPASS");
+  } else {
+    Serial.print(" | Night:");
+    Serial.print(lightSensor.isNight() ? "YES" : "NO");
+  }
+  
+  Serial.print(" | Motion:");
+  Serial.print(motionDetector.isMoving() ? "YES" : "NO");
+  Serial.print(" | LED:");
+  Serial.print(ledController.isOn() ? "ON" : "OFF");
+  
+  if (smartLight.isInCountdown()) {
+    Serial.print(" | Countdown:");
+    Serial.print(smartLight.getCountdownRemaining() / 1000);
+    Serial.print("s");
+  }
+  
+  Serial.println();
 }
 
 void handleSerialCommands() {
@@ -346,6 +409,49 @@ void handleSerialCommands() {
         delay(500);
         motionDetector.calibrate();
         printCalibrationValues();
+        break;
+      case 'd': // Shutoff delay
+        {
+          unsigned long delaySec = Serial.parseInt();
+          if (delaySec > 0) {
+            smartLight.setShutoffDelay(delaySec * 1000);
+            Serial.print("Shutoff delay set to: "); Serial.print(delaySec); Serial.println(" seconds");
+          } else {
+            Serial.println("ERROR: Delay must be > 0");
+          }
+        }
+        break;
+      case 'A': // Toggle auto mode
+        {
+          bool currentAuto = smartLight.isAutoModeEnabled();
+          smartLight.setAutoMode(!currentAuto);
+          Serial.print("Auto mode: "); Serial.println(smartLight.isAutoModeEnabled() ? "ENABLED" : "DISABLED");
+        }
+        break;
+      case 'B': // Toggle light sensor bypass
+        {
+          bool currentBypass = smartLight.isLightSensorBypassed();
+          smartLight.setLightSensorBypass(!currentBypass);
+          Serial.print("Light sensor bypass: "); 
+          Serial.println(smartLight.isLightSensorBypassed() ? "ENABLED (always night)" : "DISABLED (normal)");
+          if (smartLight.isLightSensorBypassed()) {
+            Serial.println("*** Testing mode: LED control based on IMU ONLY ***");
+          }
+        }
+        break;
+      case 'O': // Force LED ON
+        Serial.println("Forcing LED ON (manual override)");
+        smartLight.forceOn(255);
+        Serial.println("Use 'R' to return to auto mode");
+        break;
+      case 'F': // Force LED OFF
+        Serial.println("Forcing LED OFF (manual override)");
+        smartLight.forceOff();
+        Serial.println("Use 'R' to return to auto mode");
+        break;
+      case 'R': // Return to auto
+        Serial.println("Returning to automatic control mode");
+        smartLight.returnToAuto();
         break;
       case 'h': // Help
         printInstructions();
