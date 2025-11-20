@@ -12,6 +12,10 @@
  * 
  */
 
+#ifndef QMI8658C_H
+#define QMI8658C_H
+
+#include <Arduino.h>
 
 /* General purpose registers */
 #define QMI8658_WHO_AM_I    0x00  // WHO_AM_I register address.
@@ -197,3 +201,5 @@ private:
     void gyro_set_odr(gyro_odr_t odr);                        // Set the output data rate (ODR) for the gyroscope.
     void gyro_set_scale(gyro_scale_t gyro_scale);             // Set the scale for the gyroscope.
 };
+
+#endif // QMI8658C_H
