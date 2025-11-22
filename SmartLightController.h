@@ -92,6 +92,12 @@ public:
     bool isLightSensorBypassed() const { return _lightSensorBypass; }
     
     /**
+     * @brief Check if manual override is active
+     * @return true if manual override is active
+     */
+    bool isManualOverride() const { return _manualOverride; }
+    
+    /**
      * @brief Set the shutoff delay time
      * @param delayMs Delay in milliseconds
      */

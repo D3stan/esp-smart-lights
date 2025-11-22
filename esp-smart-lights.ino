@@ -189,7 +189,7 @@ void setup() {
 	}
 	
 	// Link system components to WiFi Manager for API
-	wifiManager.setSystemComponents(&smartLight, &lightSensor, &motionDetector, &eventLogger);
+	wifiManager.setSystemComponents(&smartLight, &lightSensor, &motionDetector, &ledController, &eventLogger);
 	Serial.println("System components linked to WiFi Manager API");
 	Serial.println("===============================================\n");
 	
@@ -229,6 +229,9 @@ void loop() {
       Serial.println("\n[RED BTN] Recalibrating IMU...");
       motionDetector.calibrate();
       printCalibrationValues();
+      // Save updated configuration to persistent storage
+      smartLight.saveConfiguration();
+      Serial.println("Configuration saved after calibration");
       lastButtonPress = millis();
     } else if (digitalRead(BTN_L) == LOW) {
       Serial.println("\n[BLUE BTN] Printing statistics...");

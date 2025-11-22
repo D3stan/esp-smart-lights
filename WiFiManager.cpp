@@ -3,6 +3,7 @@
 #include "config.h"
 #include "SmartLightController.h"
 #include "LightSensor.h"
+#include "LEDController.h"
 #include "MotionDetector.h"
 #include "EventLogger.h"
 
@@ -20,6 +21,7 @@ WiFiManager::WiFiManager()
     , _smartLightController(nullptr)
     , _lightSensor(nullptr)
     , _motionDetector(nullptr)
+    , _ledController(nullptr)
     , _eventLogger(nullptr)
 {
 }
@@ -516,10 +518,12 @@ const char* WiFiManager::getStateString() const {
 }
 
 void WiFiManager::setSystemComponents(void* controller, void* lightSensor, 
-                                       void* motionDetector, void* eventLogger) {
+                                       void* motionDetector, void* ledController,
+                                       void* eventLogger) {
     _smartLightController = controller;
     _lightSensor = lightSensor;
     _motionDetector = motionDetector;
+    _ledController = ledController;
     _eventLogger = eventLogger;
     Serial.println("System components linked to WiFiManager");
 }
@@ -540,22 +544,31 @@ void WiFiManager::handleApiStatus() {
     auto* controller = static_cast<SmartLightController*>(_smartLightController);
     auto* lightSensor = static_cast<LightSensor*>(_lightSensor);
     auto* motionDetector = static_cast<MotionDetector*>(_motionDetector);
+    auto* ledController = static_cast<LEDController*>(_ledController);
     
-    if (!controller || !lightSensor || !motionDetector) {
+    if (!controller || !lightSensor || !motionDetector || !ledController) {
         _webServer->send(500, "application/json", 
             "{\"error\":\"System components not initialized\"}");
         return;
     }
     
-    String json = "{";
-    json += "\"led_on\":" + String(controller->shouldLEDBeOn() ? "true" : "false") + ",";
-    json += "\"led_mode\":\"";
-    if (!controller->isAutoModeEnabled()) {
-        json += controller->shouldLEDBeOn() ? "on" : "off";
-    } else {
-        json += "auto";
+    // Get actual LED state from LED controller
+    bool ledIsOn = ledController->isOn();
+    String ledMode = "auto";
+    
+    // Check if manual override is active
+    if (controller->isManualOverride()) {
+        // In manual override, determine mode from LED state
+        ledMode = ledIsOn ? "on" : "off";
+    } else if (!controller->isAutoModeEnabled()) {
+        // Auto mode disabled (but not manual override)
+        ledMode = ledIsOn ? "on" : "off";
     }
-    json += "\",";
+    // else: auto mode active, ledMode = "auto"
+    
+    String json = "{";
+    json += "\"led_on\":" + String(ledIsOn ? "true" : "false") + ",";
+    json += "\"led_mode\":\"" + ledMode + "\",";
     json += "\"lux\":" + String(lightSensor->getLastLux(), 1) + ",";
     json += "\"motion\":" + String(motionDetector->isMoving() ? "true" : "false") + ",";
     json += "\"rssi\":" + String(getRSSI());
@@ -565,20 +578,29 @@ void WiFiManager::handleApiStatus() {
 }
 
 void WiFiManager::handleApiConfig() {
-    Preferences prefs;
-    prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
+    // Read current values from sensors (not from Preferences)
+    // This ensures we get the actual current values, including any changes
+    // made through buttons or serial commands
+    auto* lightSensor = static_cast<LightSensor*>(_lightSensor);
+    auto* motionDetector = static_cast<MotionDetector*>(_motionDetector);
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
     
-    float luxThresh = prefs.getFloat(CONFIG_LUX_THRESHOLD_KEY, DEFAULT_LUX_THRESHOLD);
-    float accelThresh = prefs.getFloat(CONFIG_ACCEL_THRESHOLD_KEY, DEFAULT_ACCEL_THRESHOLD);
-    float gyroThresh = prefs.getFloat(CONFIG_GYRO_THRESHOLD_KEY, DEFAULT_GYRO_THRESHOLD);
-    unsigned long shutoff = prefs.getULong(CONFIG_LED_SHUTOFF_KEY, DEFAULT_LED_SHUTOFF_DELAY_MS);
+    if (!lightSensor || !motionDetector || !controller) {
+        _webServer->send(500, "application/json", 
+            "{\"error\":\"System components not initialized\"}");
+        return;
+    }
     
-    prefs.end();
+    // Get live values from sensors
+    float luxThresh = lightSensor->getNightThreshold();
+    float accelThresh = motionDetector->getAccThreshold();
+    float gyroThresh = motionDetector->getGyroThreshold();
+    unsigned long shutoff = controller->getShutoffDelay();
     
     String json = "{";
     json += "\"lux_threshold\":" + String(luxThresh, 1) + ",";
-    json += "\"accel_threshold\":" + String(accelThresh, 2) + ",";
-    json += "\"gyro_threshold\":" + String(gyroThresh, 1) + ",";
+    json += "\"accel_threshold\":" + String(accelThresh, 4) + ",";
+    json += "\"gyro_threshold\":" + String(gyroThresh, 2) + ",";
     json += "\"shutoff_delay\":" + String(shutoff);
     json += "}";
     
@@ -629,17 +651,28 @@ void WiFiManager::handleApiConfigPost() {
     auto* motionDetector = static_cast<MotionDetector*>(_motionDetector);
     auto* controller = static_cast<SmartLightController*>(_smartLightController);
     
+    bool anyChanged = false;
+    
     if (lightSensor && luxThresh >= 0) {
         lightSensor->setNightThreshold(luxThresh);
+        anyChanged = true;
     }
     if (motionDetector && accelThresh >= 0) {
         motionDetector->setAccThreshold(accelThresh);
+        anyChanged = true;
     }
     if (motionDetector && gyroThresh >= 0) {
         motionDetector->setGyroThreshold(gyroThresh);
+        anyChanged = true;
     }
     if (controller && shutoff > 0) {
         controller->setShutoffDelay(shutoff);
+        anyChanged = true;
+    }
+    
+    // Save configuration to persistent storage
+    if (anyChanged && controller) {
+        controller->saveConfiguration();
     }
     
     Serial.println("Configuration updated from web dashboard");

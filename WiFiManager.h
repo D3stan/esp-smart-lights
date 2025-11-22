@@ -185,10 +185,12 @@ public:
      * @param controller Puntatore allo SmartLightController
      * @param lightSensor Puntatore al LightSensor
      * @param motionDetector Puntatore al MotionDetector
+     * @param ledController Puntatore al LEDController
      * @param eventLogger Puntatore all'EventLogger
      */
     void setSystemComponents(void* controller, void* lightSensor, 
-                             void* motionDetector, void* eventLogger);
+                             void* motionDetector, void* ledController,
+                             void* eventLogger);
 
 private:
     // Preferences storage
@@ -219,6 +221,7 @@ private:
     void* _smartLightController;
     void* _lightSensor;
     void* _motionDetector;
+    void* _ledController;
     void* _eventLogger;
     
     // Helper methods
