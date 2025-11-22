@@ -12,6 +12,7 @@
 #include "SmartLightController.h"
 #include "WiFiManager.h"
 #include "DisplayManager.h"
+#include "EventLogger.h"
 #include "config.h"
 
 // Create an instance of the display
@@ -41,8 +42,11 @@ LightSensor lightSensor(BH1750_ADDR);
 // LED strip controller instance
 LEDController ledController(LED_MOSFET_PIN);
 
+// Event logger instance
+EventLogger eventLogger;
+
 // Smart light controller instance (main logic)
-SmartLightController smartLight(motionDetector, lightSensor, ledController);
+SmartLightController smartLight(motionDetector, lightSensor, ledController, &eventLogger);
 
 // WiFi manager instance
 WiFiManager wifiManager;
@@ -155,13 +159,24 @@ void setup() {
 	
 	// Initialize Smart Light Controller
 	Serial.println("\n========== INITIALIZING SMART LIGHT CONTROLLER ==========");
-	smartLight.begin(LED_SHUTOFF_DELAY_MS); // 30 seconds shutoff delay
+	smartLight.begin(LED_SHUTOFF_DELAY_MS); // Load config and set shutoff delay
     smartLight.setLightSensorBypass(true);
 	Serial.println("Smart Light Controller initialized");
 	Serial.print("Auto Mode: "); Serial.println(smartLight.isAutoModeEnabled() ? "ENABLED" : "DISABLED");
 	Serial.print("Shutoff Delay: "); Serial.print(smartLight.getShutoffDelay() / 1000); Serial.println(" seconds");
 	Serial.println("Logic: LED ON when (Night AND Movement)");
 	Serial.println("=========================================================\n");
+	
+	// Initialize Event Logger
+	Serial.println("\n========== INITIALIZING EVENT LOGGER ==========");
+	if (!eventLogger.begin()) {
+		Serial.println("ERROR: Failed to initialize Event Logger!");
+	} else {
+		Serial.println("Event Logger initialized successfully");
+		Serial.print("Max log entries: "); Serial.println(MAX_LOG_ENTRIES);
+		Serial.print("Retention days: "); Serial.println(LOG_RETENTION_DAYS);
+	}
+	Serial.println("================================================\n");
 	
 	// Initialize WiFi Manager
 	Serial.println("\n========== INITIALIZING WIFI MANAGER ==========");
@@ -172,7 +187,15 @@ void setup() {
 	} else {
 		Serial.println("WiFi Manager initialized successfully");
 	}
+	
+	// Link system components to WiFi Manager for API
+	wifiManager.setSystemComponents(&smartLight, &lightSensor, &motionDetector, &eventLogger);
+	Serial.println("System components linked to WiFi Manager API");
 	Serial.println("===============================================\n");
+	
+	// Configure NTP for timestamps (will sync when WiFi connects)
+	configTime(3600, 3600, "pool.ntp.org", "time.nist.gov");  // GMT+1 (Italy), DST +1h
+	Serial.println("NTP time sync configured (will sync when WiFi connected)");
 
 }
 
@@ -327,6 +350,9 @@ void printInstructions() {
   Serial.println("  W - Show WiFi status");
   Serial.println("  X - Reset WiFi credentials (factory reset)");
   Serial.println("  Z - Force WiFi reconnection");
+  Serial.println("\nLog Commands:");
+  Serial.println("  E - Show event logs");
+  Serial.println("  C - Clear all event logs");
   Serial.println("========================================\n");
 }
 
@@ -502,6 +528,14 @@ void handleSerialCommands() {
         Serial.println("\nForcing WiFi reconnection...");
         wifiManager.reconnect();
         break;
+      case 'E': // Show event logs
+        printEventLogs();
+        break;
+      case 'C': // Clear event logs
+        Serial.println("\n!!! CLEARING ALL EVENT LOGS !!!");
+        eventLogger.clearAll();
+        Serial.println("All logs cleared");
+        break;
     }
     // Clear remaining buffer
     while(Serial.available()) Serial.read();
@@ -544,4 +578,43 @@ void printWiFiStatus() {
   }
   
   Serial.println("=================================\n");
+}
+
+void printEventLogs() {
+  Serial.println("\n========== EVENT LOGS ==========");
+  Serial.print("Total events: "); Serial.println(eventLogger.getEventCount());
+  Serial.print("Events today: "); Serial.println(eventLogger.getTodayEventCount());
+  Serial.print("Events last 24h: "); Serial.println(eventLogger.getEventsLastHours(24));
+  Serial.println("\nRecent events (newest first):");
+  Serial.println("--------------------------------");
+  
+  uint16_t count = eventLogger.getEventCount();
+  uint16_t maxShow = count > 20 ? 20 : count; // Show max 20 events
+  
+  for (uint16_t i = 0; i < maxShow; i++) {
+    const EventLogger::LogEntry* entry = eventLogger.getEvent(i);
+    if (!entry) continue;
+    
+    // Format timestamp
+    time_t timestamp = entry->timestamp;
+    struct tm* timeinfo = localtime(&timestamp);
+    char timeStr[20];
+    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", timeinfo);
+    
+    Serial.print(timeStr);
+    Serial.print(" | ");
+    Serial.print(entry->ledOn ? "LED ON " : "LED OFF");
+    Serial.print(" | Lux:");
+    Serial.print(entry->lux, 1);
+    Serial.print(" | Motion:");
+    Serial.print(entry->motion ? "YES" : "NO ");
+    Serial.print(" | Mode:");
+    Serial.println(entry->mode);
+  }
+  
+  if (count > maxShow) {
+    Serial.print("... and "); Serial.print(count - maxShow); Serial.println(" more events");
+  }
+  
+  Serial.println("================================\n");
 }

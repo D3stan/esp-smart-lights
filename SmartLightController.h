@@ -2,9 +2,11 @@
 #define SMART_LIGHT_CONTROLLER_H
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include "MotionDetector.h"
 #include "LightSensor.h"
 #include "LEDController.h"
+#include "EventLogger.h"
 
 /**
  * @brief Smart Light Controller - Main logic controller
@@ -23,11 +25,13 @@ public:
      * @param motionDetector Reference to motion detector instance
      * @param lightSensor Reference to light sensor instance
      * @param ledController Reference to LED controller instance
+     * @param eventLogger Pointer to event logger (optional)
      */
     SmartLightController(
         MotionDetector& motionDetector,
         LightSensor& lightSensor,
-        LEDController& ledController
+        LEDController& ledController,
+        EventLogger* eventLogger = nullptr
     );
     
     /**
@@ -122,12 +126,24 @@ public:
      * @return State description
      */
     const char* getStateString() const;
+    
+    /**
+     * @brief Load configuration from Preferences
+     * Loads thresholds and delays from non-volatile memory
+     */
+    void loadConfiguration();
+    
+    /**
+     * @brief Save current configuration to Preferences
+     */
+    void saveConfiguration();
 
 private:
     // Sensor and actuator references
     MotionDetector& _motionDetector;
     LightSensor& _lightSensor;
     LEDController& _ledController;
+    EventLogger* _eventLogger;
     
     // Configuration
     unsigned long _shutoffDelayMs;
@@ -143,6 +159,7 @@ private:
     State _currentState;
     unsigned long _countdownStartTime;
     bool _countdownActive;
+    bool _lastLEDState;  // Track LED state changes for logging
     
     // Override management
     bool _manualOverride;

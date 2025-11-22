@@ -6,6 +6,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <Preferences.h>
+#include <vector>
 
 /**
  * @brief WiFi Manager - Gestione connessione Wi-Fi con captive portal
@@ -178,6 +179,16 @@ public:
      * @return Millisecondi rimanenti, 0 se non in attesa
      */
     unsigned long getReconnectTimeRemaining() const;
+    
+    /**
+     * @brief Imposta i riferimenti ai componenti per l'API dashboard
+     * @param controller Puntatore allo SmartLightController
+     * @param lightSensor Puntatore al LightSensor
+     * @param motionDetector Puntatore al MotionDetector
+     * @param eventLogger Puntatore all'EventLogger
+     */
+    void setSystemComponents(void* controller, void* lightSensor, 
+                             void* motionDetector, void* eventLogger);
 
 private:
     // Preferences storage
@@ -204,6 +215,12 @@ private:
     bool _apModeActive;
     bool _resetButtonPressed;
     
+    // System component references (for API)
+    void* _smartLightController;
+    void* _lightSensor;
+    void* _motionDetector;
+    void* _eventLogger;
+    
     // Helper methods
     bool loadCredentials();
     void startStationMode();
@@ -220,6 +237,14 @@ private:
     void handleSave();
     void handleStatus();
     void handleNotFound();
+    void handleDashboard();
+    void handleLogs();
+    void handleApiStatus();
+    void handleApiConfig();
+    void handleApiConfigPost();
+    void handleApiLedOverride();
+    void handleApiLogs();
+    void handleApiLogsDelete();
     
     // HTML pages (stored in PROGMEM to save RAM)
     static const char* getConfigPageHTML();

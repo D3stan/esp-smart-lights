@@ -1,29 +1,41 @@
 #include "SmartLightController.h"
+#include "config.h"
 
 SmartLightController::SmartLightController(
     MotionDetector& motionDetector,
     LightSensor& lightSensor,
-    LEDController& ledController
+    LEDController& ledController,
+    EventLogger* eventLogger
 )
     : _motionDetector(motionDetector)
     , _lightSensor(lightSensor)
     , _ledController(ledController)
-    , _shutoffDelayMs(30000)  // Default 30 seconds
+    , _eventLogger(eventLogger)
+    , _shutoffDelayMs(DEFAULT_LED_SHUTOFF_DELAY_MS)
     , _autoModeEnabled(true)
     , _currentState(State::OFF)
     , _countdownStartTime(0)
     , _countdownActive(false)
+    , _lastLEDState(false)
     , _manualOverride(false)
     , _lightSensorBypass(false)
 {
 }
 
 void SmartLightController::begin(unsigned long shutoffDelayMs) {
-    _shutoffDelayMs = shutoffDelayMs;
+    // Load configuration from Preferences
+    loadConfiguration();
+    
+    // Override with parameter if provided
+    if (shutoffDelayMs > 0) {
+        _shutoffDelayMs = shutoffDelayMs;
+    }
+    
     _currentState = State::OFF;
     _countdownActive = false;
     _manualOverride = false;
     _autoModeEnabled = true;
+    _lastLEDState = false;
     
     // Ensure LED starts off
     _ledController.turnOff();
@@ -99,11 +111,27 @@ void SmartLightController::transitionTo(State newState) {
         case State::OFF:
             _ledController.turnOff();
             _countdownActive = false;
+            
+            // Log OFF event if LED was on
+            if (_lastLEDState && _eventLogger) {
+                const char* mode = _manualOverride ? (_autoModeEnabled ? "auto" : "manual") : "auto";
+                _eventLogger->logEvent(false, _lightSensor.getLastLux(), 
+                                      _motionDetector.isMoving(), mode);
+            }
+            _lastLEDState = false;
             break;
             
         case State::ON:
             _ledController.turnOn(255);  // Full brightness
             _countdownActive = false;
+            
+            // Log ON event if LED was off
+            if (!_lastLEDState && _eventLogger) {
+                const char* mode = _manualOverride ? (_autoModeEnabled ? "auto" : "manual") : "auto";
+                _eventLogger->logEvent(true, _lightSensor.getLastLux(), 
+                                      _motionDetector.isMoving(), mode);
+            }
+            _lastLEDState = true;
             break;
             
         case State::COUNTDOWN:
@@ -117,11 +145,25 @@ void SmartLightController::transitionTo(State newState) {
 void SmartLightController::forceOn(uint8_t brightness) {
     _manualOverride = true;
     _ledController.turnOn(brightness);
+    
+    // Log event if state changed
+    if (!_lastLEDState && _eventLogger) {
+        _eventLogger->logEvent(true, _lightSensor.getLastLux(), 
+                              _motionDetector.isMoving(), "on");
+    }
+    _lastLEDState = true;
 }
 
 void SmartLightController::forceOff() {
     _manualOverride = true;
     _ledController.turnOff();
+    
+    // Log event if state changed
+    if (_lastLEDState && _eventLogger) {
+        _eventLogger->logEvent(false, _lightSensor.getLastLux(), 
+                              _motionDetector.isMoving(), "off");
+    }
+    _lastLEDState = false;
 }
 
 void SmartLightController::returnToAuto() {
@@ -156,4 +198,55 @@ const char* SmartLightController::getStateString() const {
         default:
             return "UNKNOWN";
     }
+}
+
+void SmartLightController::loadConfiguration() {
+    Preferences prefs;
+    if (!prefs.begin(CONFIG_PREFS_NAMESPACE, true)) {  // Read-only
+        Serial.println("Failed to open config preferences for reading");
+        return;
+    }
+    
+    // Load LED shutoff delay
+    _shutoffDelayMs = prefs.getULong(CONFIG_LED_SHUTOFF_KEY, DEFAULT_LED_SHUTOFF_DELAY_MS);
+    
+    // Load thresholds and apply to sensors
+    float luxThresh = prefs.getFloat(CONFIG_LUX_THRESHOLD_KEY, DEFAULT_LUX_THRESHOLD);
+    float accelThresh = prefs.getFloat(CONFIG_ACCEL_THRESHOLD_KEY, DEFAULT_ACCEL_THRESHOLD);
+    float gyroThresh = prefs.getFloat(CONFIG_GYRO_THRESHOLD_KEY, DEFAULT_GYRO_THRESHOLD);
+    
+    prefs.end();
+    
+    // Apply loaded values
+    _lightSensor.setNightThreshold(luxThresh);
+    _motionDetector.setAccThreshold(accelThresh);
+    _motionDetector.setGyroThreshold(gyroThresh);
+    
+    Serial.println("Configuration loaded from Preferences:");
+    Serial.print("  Lux threshold: ");
+    Serial.println(luxThresh);
+    Serial.print("  Accel threshold: ");
+    Serial.println(accelThresh);
+    Serial.print("  Gyro threshold: ");
+    Serial.println(gyroThresh);
+    Serial.print("  Shutoff delay: ");
+    Serial.print(_shutoffDelayMs / 1000);
+    Serial.println(" seconds");
+}
+
+void SmartLightController::saveConfiguration() {
+    Preferences prefs;
+    if (!prefs.begin(CONFIG_PREFS_NAMESPACE, false)) {  // Read-write
+        Serial.println("Failed to open config preferences for writing");
+        return;
+    }
+    
+    prefs.putULong(CONFIG_LED_SHUTOFF_KEY, _shutoffDelayMs);
+    prefs.putFloat(CONFIG_LUX_THRESHOLD_KEY, _lightSensor.getNightThreshold());
+    prefs.putFloat(CONFIG_ACCEL_THRESHOLD_KEY, _motionDetector.getAccThreshold());
+    prefs.putFloat(CONFIG_GYRO_THRESHOLD_KEY, _motionDetector.getGyroThreshold());
+    
+    prefs.end();
+    
+    Serial.println("Configuration saved to Preferences");
 }

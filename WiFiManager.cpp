@@ -1,6 +1,10 @@
 #include "WiFiManager.h"
 #include "WiFiPages.h"
 #include "config.h"
+#include "SmartLightController.h"
+#include "LightSensor.h"
+#include "MotionDetector.h"
+#include "EventLogger.h"
 
 WiFiManager::WiFiManager()
     : _webServer(nullptr)
@@ -13,6 +17,10 @@ WiFiManager::WiFiManager()
     , _resetButtonPressStart(0)
     , _apModeActive(false)
     , _resetButtonPressed(false)
+    , _smartLightController(nullptr)
+    , _lightSensor(nullptr)
+    , _motionDetector(nullptr)
+    , _eventLogger(nullptr)
 {
 }
 
@@ -310,9 +318,20 @@ void WiFiManager::setupWebServer() {
     
     // Register handlers
     _webServer->on("/", [this]() { handleRoot(); });
+    _webServer->on("/dashboard", [this]() { handleDashboard(); });
+    _webServer->on("/logs", [this]() { handleLogs(); });
     _webServer->on("/scan", [this]() { handleScan(); });
     _webServer->on("/save", [this]() { handleSave(); });
     _webServer->on("/status", [this]() { handleStatus(); });
+    
+    // API endpoints
+    _webServer->on("/api/status", HTTP_GET, [this]() { handleApiStatus(); });
+    _webServer->on("/api/config", HTTP_GET, [this]() { handleApiConfig(); });
+    _webServer->on("/api/config", HTTP_POST, [this]() { handleApiConfigPost(); });
+    _webServer->on("/api/led/override", HTTP_POST, [this]() { handleApiLedOverride(); });
+    _webServer->on("/api/logs", HTTP_GET, [this]() { handleApiLogs(); });
+    _webServer->on("/api/logs", HTTP_DELETE, [this]() { handleApiLogsDelete(); });
+    
     _webServer->onNotFound([this]() { handleNotFound(); });
     
     _webServer->begin();
@@ -495,3 +514,208 @@ const char* WiFiManager::getStateString() const {
         default: return "UNKNOWN";
     }
 }
+
+void WiFiManager::setSystemComponents(void* controller, void* lightSensor, 
+                                       void* motionDetector, void* eventLogger) {
+    _smartLightController = controller;
+    _lightSensor = lightSensor;
+    _motionDetector = motionDetector;
+    _eventLogger = eventLogger;
+    Serial.println("System components linked to WiFiManager");
+}
+
+void WiFiManager::handleDashboard() {
+    String html = FPSTR(WIFI_DASHBOARD_PAGE);
+    _webServer->send(200, "text/html", html);
+}
+
+void WiFiManager::handleLogs() {
+    String html = FPSTR(WIFI_LOGS_PAGE);
+    _webServer->send(200, "text/html", html);
+}
+
+void WiFiManager::handleApiStatus() {
+    // Need forward declarations to avoid circular dependencies
+    // Cast pointers back to proper types
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    auto* lightSensor = static_cast<LightSensor*>(_lightSensor);
+    auto* motionDetector = static_cast<MotionDetector*>(_motionDetector);
+    
+    if (!controller || !lightSensor || !motionDetector) {
+        _webServer->send(500, "application/json", 
+            "{\"error\":\"System components not initialized\"}");
+        return;
+    }
+    
+    String json = "{";
+    json += "\"led_on\":" + String(controller->shouldLEDBeOn() ? "true" : "false") + ",";
+    json += "\"led_mode\":\"";
+    if (!controller->isAutoModeEnabled()) {
+        json += controller->shouldLEDBeOn() ? "on" : "off";
+    } else {
+        json += "auto";
+    }
+    json += "\",";
+    json += "\"lux\":" + String(lightSensor->getLastLux(), 1) + ",";
+    json += "\"motion\":" + String(motionDetector->isMoving() ? "true" : "false") + ",";
+    json += "\"rssi\":" + String(getRSSI());
+    json += "}";
+    
+    _webServer->send(200, "application/json", json);
+}
+
+void WiFiManager::handleApiConfig() {
+    Preferences prefs;
+    prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
+    
+    float luxThresh = prefs.getFloat(CONFIG_LUX_THRESHOLD_KEY, DEFAULT_LUX_THRESHOLD);
+    float accelThresh = prefs.getFloat(CONFIG_ACCEL_THRESHOLD_KEY, DEFAULT_ACCEL_THRESHOLD);
+    float gyroThresh = prefs.getFloat(CONFIG_GYRO_THRESHOLD_KEY, DEFAULT_GYRO_THRESHOLD);
+    unsigned long shutoff = prefs.getULong(CONFIG_LED_SHUTOFF_KEY, DEFAULT_LED_SHUTOFF_DELAY_MS);
+    
+    prefs.end();
+    
+    String json = "{";
+    json += "\"lux_threshold\":" + String(luxThresh, 1) + ",";
+    json += "\"accel_threshold\":" + String(accelThresh, 2) + ",";
+    json += "\"gyro_threshold\":" + String(gyroThresh, 1) + ",";
+    json += "\"shutoff_delay\":" + String(shutoff);
+    json += "}";
+    
+    _webServer->send(200, "application/json", json);
+}
+
+void WiFiManager::handleApiConfigPost() {
+    if (!_webServer->hasArg("plain")) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"No body provided\"}");
+        return;
+    }
+    
+    // Parse JSON manually (Arduino JSON library might not be available)
+    String body = _webServer->arg("plain");
+    
+    // Extract values (simple parsing, assuming valid JSON)
+    float luxThresh = -1, accelThresh = -1, gyroThresh = -1;
+    unsigned long shutoff = 0;
+    
+    int idx;
+    if ((idx = body.indexOf("\"lux_threshold\":")) >= 0) {
+        luxThresh = body.substring(idx + 16).toFloat();
+    }
+    if ((idx = body.indexOf("\"accel_threshold\":")) >= 0) {
+        accelThresh = body.substring(idx + 18).toFloat();
+    }
+    if ((idx = body.indexOf("\"gyro_threshold\":")) >= 0) {
+        gyroThresh = body.substring(idx + 17).toFloat();
+    }
+    if ((idx = body.indexOf("\"shutoff_delay\":")) >= 0) {
+        shutoff = body.substring(idx + 16).toInt();
+    }
+    
+    // Save to preferences
+    Preferences prefs;
+    prefs.begin(CONFIG_PREFS_NAMESPACE, false);  // Read-write
+    
+    if (luxThresh >= 0) prefs.putFloat(CONFIG_LUX_THRESHOLD_KEY, luxThresh);
+    if (accelThresh >= 0) prefs.putFloat(CONFIG_ACCEL_THRESHOLD_KEY, accelThresh);
+    if (gyroThresh >= 0) prefs.putFloat(CONFIG_GYRO_THRESHOLD_KEY, gyroThresh);
+    if (shutoff > 0) prefs.putULong(CONFIG_LED_SHUTOFF_KEY, shutoff);
+    
+    prefs.end();
+    
+    // Apply to system components
+    auto* lightSensor = static_cast<LightSensor*>(_lightSensor);
+    auto* motionDetector = static_cast<MotionDetector*>(_motionDetector);
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    
+    if (lightSensor && luxThresh >= 0) {
+        lightSensor->setNightThreshold(luxThresh);
+    }
+    if (motionDetector && accelThresh >= 0) {
+        motionDetector->setAccThreshold(accelThresh);
+    }
+    if (motionDetector && gyroThresh >= 0) {
+        motionDetector->setGyroThreshold(gyroThresh);
+    }
+    if (controller && shutoff > 0) {
+        controller->setShutoffDelay(shutoff);
+    }
+    
+    Serial.println("Configuration updated from web dashboard");
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Configuration saved\"}");
+}
+
+void WiFiManager::handleApiLedOverride() {
+    if (!_webServer->hasArg("plain")) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"No body provided\"}");
+        return;
+    }
+    
+    String body = _webServer->arg("plain");
+    String mode = "";
+    
+    int idx = body.indexOf("\"mode\":\"");
+    if (idx >= 0) {
+        int startIdx = idx + 8;
+        int endIdx = body.indexOf("\"", startIdx);
+        mode = body.substring(startIdx, endIdx);
+    }
+    
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    if (!controller) {
+        _webServer->send(500, "application/json", 
+            "{\"success\":false,\"message\":\"Controller not initialized\"}");
+        return;
+    }
+    
+    if (mode == "auto") {
+        controller->returnToAuto();
+        Serial.println("LED mode set to AUTO");
+    } else if (mode == "on") {
+        controller->forceOn(255);
+        Serial.println("LED mode set to FORCED ON");
+    } else if (mode == "off") {
+        controller->forceOff();
+        Serial.println("LED mode set to FORCED OFF");
+    } else {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"Invalid mode\"}");
+        return;
+    }
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Mode updated\"}");
+}
+
+void WiFiManager::handleApiLogs() {
+    auto* logger = static_cast<EventLogger*>(_eventLogger);
+    if (!logger) {
+        _webServer->send(500, "application/json", 
+            "{\"error\":\"Event logger not initialized\"}");
+        return;
+    }
+    
+    String json = logger->getEventsJSON();
+    _webServer->send(200, "application/json", json);
+}
+
+void WiFiManager::handleApiLogsDelete() {
+    auto* logger = static_cast<EventLogger*>(_eventLogger);
+    if (!logger) {
+        _webServer->send(500, "application/json", 
+            "{\"success\":false,\"message\":\"Event logger not initialized\"}");
+        return;
+    }
+    
+    logger->clearAll();
+    Serial.println("All logs cleared via API");
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Logs cleared\"}");
+}
+
+

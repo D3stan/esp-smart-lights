@@ -55,3 +55,30 @@
 // Factory Reset (hold button to reset Wi-Fi credentials)
 #define WIFI_RESET_BUTTON_PIN BTN_C            // Button to hold for factory reset (center button)
 #define WIFI_RESET_HOLD_TIME_MS 5000           // Hold time required for reset (5 seconds)
+
+// ========== Smart Light Configuration ==========
+// User configurable parameters (stored in Preferences)
+
+#define CONFIG_PREFS_NAMESPACE "light_config"  // Namespace for light configuration
+
+// Light Sensor Thresholds
+#define DEFAULT_LUX_THRESHOLD 10.0             // Default threshold for night detection (lux)
+#define CONFIG_LUX_THRESHOLD_KEY "lux_thresh"  // Preferences key
+
+// IMU Motion Detection Thresholds
+#define DEFAULT_ACCEL_THRESHOLD 0.15           // Default acceleration threshold (g) for motion detection
+#define DEFAULT_GYRO_THRESHOLD 15.0            // Default gyroscope threshold (deg/s) for motion detection
+#define DEFAULT_MOTION_DEBOUNCE_MS 1000        // Default minimum motion time before LED on (ms)
+
+#define CONFIG_ACCEL_THRESHOLD_KEY "accel_th"  // Preferences key
+#define CONFIG_GYRO_THRESHOLD_KEY "gyro_th"    // Preferences key
+#define CONFIG_MOTION_DEBOUNCE_KEY "motion_db" // Preferences key
+
+// LED Control
+#define DEFAULT_LED_SHUTOFF_DELAY_MS 30000     // Default delay before LED off after motion stops (30 seconds)
+#define CONFIG_LED_SHUTOFF_KEY "led_shutoff"   // Preferences key
+
+// Event Logging
+#define LOG_PREFS_NAMESPACE "event_logs"       // Namespace for event logs
+#define MAX_LOG_ENTRIES 100                    // Maximum number of log entries to store
+#define LOG_RETENTION_DAYS 7                   // Keep logs for 7 days
