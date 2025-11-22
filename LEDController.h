@@ -16,7 +16,7 @@ public:
      * @param pin GPIO pin connected to MOSFET gate
      * @param pwmChannel PWM channel to use (ESP32 has 16 channels, 0-15)
      */
-    explicit LEDController(uint8_t pin, uint8_t pwmChannel = 0);
+    explicit LEDController(uint8_t pin);
     
     /**
      * @brief Initialize the LED controller

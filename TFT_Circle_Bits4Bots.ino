@@ -37,7 +37,7 @@ MotionDetector motionDetector(&qmi8658c);
 LightSensor lightSensor(BH1750_ADDR);
 
 // LED strip controller instance
-LEDController ledController(LED_MOSFET_PIN, 0); // Use PWM channel 0
+LEDController ledController(LED_MOSFET_PIN);
 
 // Smart light controller instance (main logic)
 SmartLightController smartLight(motionDetector, lightSensor, ledController);
@@ -144,7 +144,8 @@ void setup() {
 	
 	// Initialize Smart Light Controller
 	Serial.println("\n========== INITIALIZING SMART LIGHT CONTROLLER ==========");
-	smartLight.begin(30000); // 30 seconds shutoff delay
+	smartLight.begin(LED_SHUTOFF_DELAY_MS); // 30 seconds shutoff delay
+    smartLight.setLightSensorBypass(true);
 	Serial.println("Smart Light Controller initialized");
 	Serial.print("Auto Mode: "); Serial.println(smartLight.isAutoModeEnabled() ? "ENABLED" : "DISABLED");
 	Serial.print("Shutoff Delay: "); Serial.print(smartLight.getShutoffDelay() / 1000); Serial.println(" seconds");
@@ -182,13 +183,13 @@ void loop() {
       Serial.println("\n[BLUE BTN] Printing statistics...");
       printStatistics();
       printLightStatus();
-                bool currentBypass = smartLight.isLightSensorBypassed();
-          smartLight.setLightSensorBypass(!currentBypass);
-          Serial.print("Light sensor bypass: "); 
-          Serial.println(smartLight.isLightSensorBypassed() ? "ENABLED (always night)" : "DISABLED (normal)");
-          if (smartLight.isLightSensorBypassed()) {
-            Serial.println("*** Testing mode: LED control based on IMU ONLY ***");
-          }
+      bool currentBypass = smartLight.isLightSensorBypassed();
+      smartLight.setLightSensorBypass(!currentBypass);
+      Serial.print("Light sensor bypass: "); 
+      Serial.println(smartLight.isLightSensorBypassed() ? "ENABLED (always night)" : "DISABLED (normal)");
+      if (smartLight.isLightSensorBypassed()) {
+        Serial.println("*** Testing mode: LED control based on IMU ONLY ***");
+      }
       lastButtonPress = millis();
     } else if (digitalRead(BTN_C) == LOW) {
       Serial.println("\n[GREEN BTN] Testing LED...");

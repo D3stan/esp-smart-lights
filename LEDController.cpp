@@ -1,8 +1,7 @@
 #include "LEDController.h"
 
-LEDController::LEDController(uint8_t pin, uint8_t pwmChannel)
+LEDController::LEDController(uint8_t pin)
     : _pin(pin)
-    , _pwmChannel(pwmChannel)
     , _pwmResolution(8)
     , _currentBrightness(0)
     , _maxValue(255)
@@ -14,11 +13,13 @@ bool LEDController::begin(uint32_t frequency, uint8_t resolution) {
     _pwmResolution = resolution;
     _maxValue = (1 << resolution) - 1;  // 2^resolution - 1
 
+    pinMode(_pin, OUTPUT);
+
     // Attach pin to PWM channel
     ledcAttach(_pin, frequency, resolution);
     
     // Start with LED off
-    ledcWrite(_pwmChannel, 0);
+    ledcWrite(_pin, 0);
     _currentBrightness = 0;
     
     _isInitialized = true;
@@ -32,7 +33,7 @@ void LEDController::setBrightness(uint8_t brightness) {
     
     _currentBrightness = brightness;
     uint16_t duty = brightnessToDuty(brightness);
-    ledcWrite(_pwmChannel, duty);
+    ledcWrite(_pin, duty);
 }
 
 void LEDController::turnOn(uint8_t brightness) {

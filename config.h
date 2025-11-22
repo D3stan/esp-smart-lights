@@ -10,7 +10,8 @@
 #define BH1750_ADDR 0x23  // ADDR pin to GND (use 0x5C if ADDR to VCC)
 
 // LED Strip Control (via MOSFET IRLZ44N)
-#define LED_MOSFET_PIN 13  // PWM output to MOSFET gate
+#define LED_MOSFET_PIN 14  // PWM output to MOSFET gate
+#define LED_SHUTOFF_DELAY_MS 300  // Default shutoff delay (30 seconds)
 
 // RGB Led
 #define BTN_R 48
