@@ -5,6 +5,9 @@ DisplayManager::DisplayManager(Adafruit_ST7735& tft)
     : _tft(tft)
     , _updateIntervalMs(1000)
     , _lastUpdate(0)
+    , _lcdTimeoutMs(30000)  // Default 30 seconds
+    , _lastActivityTime(0)
+    , _backlightOn(true)
     , _prevWiFiState("")
     , _prevIP("")
     , _prevLux(-1.0f)
@@ -16,10 +19,12 @@ DisplayManager::DisplayManager(Adafruit_ST7735& tft)
 void DisplayManager::begin(unsigned long updateIntervalMs) {
     _updateIntervalMs = updateIntervalMs;
     _lastUpdate = 0;
+    _lastActivityTime = millis();  // Initialize activity time
     
     // Initialize backlight
     pinMode(TFT_BL, OUTPUT);
     setBacklight(true);
+    _backlightOn = true;
     
     // Clear display
     clear();
@@ -28,6 +33,13 @@ void DisplayManager::begin(unsigned long updateIntervalMs) {
     showWelcomeScreen();
     
     Serial.println("Display Manager initialized");
+    if (_lcdTimeoutMs > 0) {
+        Serial.print("LCD auto-off timeout: ");
+        Serial.print(_lcdTimeoutMs / 1000);
+        Serial.println(" seconds");
+    } else {
+        Serial.println("LCD auto-off disabled");
+    }
 }
 
 void DisplayManager::update(
@@ -36,6 +48,14 @@ void DisplayManager::update(
     const MotionDetector& motionDetector,
     const LEDController& ledController
 ) {
+    // Check LCD timeout first
+    checkLCDTimeout();
+    
+    // If display is off, skip drawing updates (but still check timeout)
+    if (!_backlightOn) {
+        return;
+    }
+    
     // Check if it's time to update
     unsigned long now = millis();
     if (now - _lastUpdate < _updateIntervalMs) {
@@ -50,25 +70,49 @@ void DisplayManager::update(
     bool currentMoving = motionDetector.isMoving();
     bool currentLEDOn = ledController.isOn();
     
+    // Detect state changes for activity tracking
+    bool stateChanged = false;
+    
     // Update header if WiFi state or IP changed
     if (currentWiFiState != _prevWiFiState || currentIP != _prevIP) {
         drawHeader(wifiManager);
         _prevWiFiState = currentWiFiState;
         _prevIP = currentIP;
+        stateChanged = true;
     }
     
     // Update sensors if values changed significantly
     if (abs(currentLux - _prevLux) > 1.0f || currentMoving != _prevMoving) {
         drawSensors(lightSensor, motionDetector);
         _prevLux = currentLux;
-        _prevMoving = currentMoving;
+        
+        // Motion state change detected
+        if (currentMoving != _prevMoving) {
+            _prevMoving = currentMoving;
+            stateChanged = true;
+            
+            // Wake display on motion if configured
+            #if LCD_WAKE_ON_MOTION
+            if (currentMoving) {
+                wakeDisplay();
+            }
+            #endif
+        }
     }
     
     // Update status if LED state changed
     if (currentLEDOn != _prevLEDOn) {
         drawStatus(ledController);
         _prevLEDOn = currentLEDOn;
+        stateChanged = true;
     }
+    
+    // Update activity time if any state changed
+    #if LCD_WAKE_ON_STATE_CHANGE
+    if (stateChanged) {
+        updateActivityTime();
+    }
+    #endif
 }
 
 void DisplayManager::forceUpdate() {
@@ -126,6 +170,43 @@ void DisplayManager::clear() {
 
 void DisplayManager::setBacklight(bool enabled) {
     digitalWrite(TFT_BL, enabled ? HIGH : LOW);
+    _backlightOn = enabled;
+    
+    if (enabled) {
+        Serial.println("[DISPLAY] Backlight ON");
+    } else {
+        Serial.println("[DISPLAY] Backlight OFF (battery saving)");
+    }
+}
+
+void DisplayManager::wakeDisplay() {
+    if (!_backlightOn) {
+        setBacklight(true);
+        forceUpdate();  // Redraw display content
+    }
+    updateActivityTime();
+}
+
+void DisplayManager::checkLCDTimeout() {
+    // Skip if timeout is disabled (0)
+    if (_lcdTimeoutMs == 0) {
+        return;
+    }
+    
+    unsigned long now = millis();
+    unsigned long elapsed = now - _lastActivityTime;
+    
+    // Turn off backlight if timeout exceeded
+    if (_backlightOn && elapsed >= _lcdTimeoutMs) {
+        setBacklight(false);
+        Serial.print("[DISPLAY] Auto-off after ");
+        Serial.print(_lcdTimeoutMs / 1000);
+        Serial.println(" seconds of inactivity");
+    }
+}
+
+void DisplayManager::updateActivityTime() {
+    _lastActivityTime = millis();
 }
 
 void DisplayManager::drawHeader(const WiFiManager& wifiManager) {

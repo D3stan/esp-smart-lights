@@ -191,6 +191,12 @@ public:
     void setSystemComponents(void* controller, void* lightSensor, 
                              void* motionDetector, void* ledController,
                              void* eventLogger);
+    
+    /**
+     * @brief Ottieni il riferimento al WebServer interno
+     * @return Puntatore al WebServer (può essere nullptr se non inizializzato)
+     */
+    WebServer* getWebServer() { return _webServer; }
 
 private:
     // Preferences storage

@@ -95,6 +95,29 @@ public:
      * @return Intervallo in millisecondi
      */
     unsigned long getUpdateInterval() const { return _updateIntervalMs; }
+    
+    /**
+     * @brief Imposta il timeout per lo spegnimento automatico del LCD
+     * @param timeoutMs Timeout in millisecondi (0 = disabilita auto-off)
+     */
+    void setLCDTimeout(unsigned long timeoutMs) { _lcdTimeoutMs = timeoutMs; }
+    
+    /**
+     * @brief Ottieni il timeout corrente per lo spegnimento LCD
+     * @return Timeout in millisecondi
+     */
+    unsigned long getLCDTimeout() const { return _lcdTimeoutMs; }
+    
+    /**
+     * @brief Riattiva il display manualmente
+     */
+    void wakeDisplay();
+    
+    /**
+     * @brief Controlla se il display è attualmente acceso
+     * @return true se il backlight è acceso
+     */
+    bool isDisplayOn() const { return _backlightOn; }
 
 private:
     // TFT display reference
@@ -103,6 +126,11 @@ private:
     // Update timing
     unsigned long _updateIntervalMs;
     unsigned long _lastUpdate;
+    
+    // LCD power management
+    unsigned long _lcdTimeoutMs;           // Timeout before turning off LCD (0 = disabled)
+    unsigned long _lastActivityTime;       // Last time there was activity (motion or state change)
+    bool _backlightOn;                     // Current backlight state
     
     // Previous values for change detection
     String _prevWiFiState;
@@ -138,6 +166,8 @@ private:
     uint16_t getWiFiStateColor(WiFiManager::ConnectionState state);
     String formatIP(const IPAddress& ip);
     String shortenSSID(const String& ssid, uint8_t maxLen = 16);
+    void checkLCDTimeout();                // Check and handle LCD timeout
+    void updateActivityTime();             // Update last activity timestamp
 };
 
 #endif // DISPLAY_MANAGER_H

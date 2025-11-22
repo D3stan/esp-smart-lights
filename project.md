@@ -387,3 +387,264 @@ Il sistema sarà alimentato da un **powerbank a 5V**.
 * **Efficienza:** Il consumo energetico deve essere ottimizzato. Quando la condizione $Stato\_Luce\_Ambiente$ è FALSO (giorno), il sistema può entrare in una modalità di **deep sleep ciclico**, risvegliandosi periodicamente (es. ogni 10 minuti) per controllare la luminosità ambientale, riducendo drasticamente il consumo.
 * **Controllo Tensione:** Assicurarsi che il powerbank sia in grado di fornire corrente sufficiente per la striscia LED alla massima luminosità, oltre che per l'ESP32.
 * **Monitoraggio:** Utilizzare l'ADC dell'ESP32 (se disponibile e opportunamente configurato con un partitore di tensione) per monitorare lo stato di carica residua del powerbank, visualizzandolo sul display LCD.
+
+---
+
+## 10. Aggiornamento Firmware Remoto (OTA)
+
+Il sistema implementa un modulo dedicato per l'**aggiornamento Over-The-Air (OTA)** del firmware, permettendo di aggiornare il software del dispositivo senza necessità di connessione fisica USB.
+
+### 10.1. Caratteristiche del Sistema OTA
+
+Il sistema OTA offre le seguenti funzionalità:
+
+* **Aggiornamento da URL Remoto**: Possibilità di specificare un URL HTTPS per scaricare il firmware (es. `https://server.example.com/firmware.bin`)
+* **Upload Locale**: Caricamento diretto di un file `.bin` tramite interfaccia web
+* **Rollback Automatico**: Utilizzo delle partizioni OTA dell'ESP32 per permettere il rollback automatico in caso di firmware corrotto
+* **Preservazione Configurazione**: Le credenziali Wi-Fi e tutte le configurazioni salvate vengono preservate durante l'aggiornamento
+* **Interfaccia Web Dedicata**: Pagina web responsive con progress bar e log degli errori in tempo reale
+* **Nessuna Autenticazione**: Sistema semplificato per uso interno senza protezione password
+
+### 10.2. Architettura delle Partizioni OTA
+
+L'ESP32-S3 utilizza uno schema di partizioni con due slot OTA:
+
+```
+┌─────────────────────────┐
+│   Bootloader            │  Immutabile
+├─────────────────────────┤
+│   Partition Table       │  Immutabile
+├─────────────────────────┤
+│   OTA Slot 0 (app0)    │  ← Firmware Attivo
+│   1.4 MB                │
+├─────────────────────────┤
+│   OTA Slot 1 (app1)    │  ← Firmware Nuovo
+│   1.4 MB                │
+├─────────────────────────┤
+│   NVS (Preferences)     │  ← Credenziali/Config
+│   20 KB                 │    (Preservato)
+└─────────────────────────┘
+```
+
+**Processo di Aggiornamento:**
+
+1. Il firmware nuovo viene scaricato e scritto nella partizione OTA inattiva (es. app1)
+2. Se lo scaricamento e la scrittura hanno successo, il bootloader viene configurato per avviare dalla nuova partizione
+3. Il dispositivo si riavvia
+4. Se il nuovo firmware parte correttamente e viene confermato, l'aggiornamento è completato
+5. Se il nuovo firmware non parte o è corrotto, il bootloader riavvia automaticamente dalla partizione precedente (rollback)
+
+### 10.3. Interfaccia Web OTA
+
+L'interfaccia web per l'OTA è accessibile all'indirizzo:
+
+```
+http://<device-ip>/ota
+o
+http://<hostname>.local/ota
+```
+
+**Funzionalità dell'Interfaccia:**
+
+* **Pannello Informazioni Correnti**:
+  - Versione firmware attuale (se implementata)
+  - Partizione attiva (OTA_0 o OTA_1)
+  - Spazio disponibile per l'aggiornamento
+  - Dimensione massima firmware supportata
+
+* **Metodo 1 - URL Remoto**:
+  - Campo di input per inserire URL del firmware (supporta HTTP e HTTPS)
+  - Pulsante "Scarica e Aggiorna"
+  - Progress bar per il download
+  - Validazione URL prima del download
+
+* **Metodo 2 - Upload Locale**:
+  - Drag & drop o selezione file `.bin`
+  - Verifica dimensione file prima dell'upload
+  - Progress bar per l'upload
+  - Validazione formato file
+
+* **Log in Tempo Reale**:
+  - Stato connessione al server remoto
+  - Progress download/upload (byte scaricati/caricati)
+  - Stato scrittura flash
+  - Messaggi di errore dettagliati
+  - Conferma successo o fallimento
+
+### 10.4. Gestione Errori
+
+Il sistema OTA implementa una gestione completa degli errori con logging dettagliato:
+
+**Errori di Connessione:**
+- `ERR_CONNECTION_REFUSED`: Server non raggiungibile
+- `ERR_TIMEOUT`: Timeout durante il download (>60 secondi)
+- `ERR_DNS_FAILED`: Impossibile risolvere l'hostname
+- `ERR_SSL_FAILED`: Errore certificato SSL (per HTTPS)
+
+**Errori di Download:**
+- `ERR_HTTP_404`: File firmware non trovato sul server
+- `ERR_HTTP_500`: Errore server remoto
+- `ERR_INVALID_RESPONSE`: Risposta HTTP non valida
+- `ERR_FILE_TOO_LARGE`: File supera lo spazio disponibile
+
+**Errori di Scrittura:**
+- `ERR_PARTITION_NOT_FOUND`: Partizione OTA non disponibile
+- `ERR_FLASH_WRITE_FAILED`: Errore scrittura memoria flash
+- `ERR_FLASH_VERIFY_FAILED`: Verifica integrità fallita dopo scrittura
+- `ERR_INSUFFICIENT_SPACE`: Spazio insufficiente nella partizione
+
+**Errori di Sistema:**
+- `ERR_OTA_BEGIN_FAILED`: Impossibile inizializzare il processo OTA
+- `ERR_OTA_END_FAILED`: Impossibile finalizzare l'aggiornamento
+- `ERR_ROLLBACK_FAILED`: Rollback automatico fallito
+- `ERR_REBOOT_REQUIRED`: Riavvio necessario ma non eseguito
+
+### 10.5. Sicurezza e Best Practices
+
+Nonostante il sistema sia semplificato per uso interno, vengono implementate alcune best practices:
+
+* **Checksum MD5**: Verifica basilare dell'integrità del file scaricato
+* **Validazione Dimensione**: Controllo che il firmware non superi lo spazio disponibile prima di iniziare
+* **Timeout Configurabili**: Timeout di rete per evitare blocchi indefiniti
+* **Logging Completo**: Tracciamento di ogni operazione per debugging
+* **Preservazione NVS**: La partizione NVS (credenziali, configurazioni) non viene mai toccata
+* **Rollback Automatico**: Protezione contro brick del dispositivo
+
+### 10.6. Modulo Software - OTAManager
+
+Il modulo `OTAManager` (classe C++) incapsula tutta la logica OTA:
+
+**File del Modulo:**
+- `OTAManager.h` - Definizione classe e interfaccia pubblica
+- `OTAManager.cpp` - Implementazione logica OTA
+- `OTAPages.h` - Pagine HTML/CSS/JavaScript per interfaccia web (PROGMEM)
+
+**Metodi Principali:**
+
+```cpp
+class OTAManager {
+public:
+    // Inizializzazione
+    bool begin();
+    
+    // Update loop (gestisce il web server)
+    void update();
+    
+    // Aggiornamento da URL
+    bool updateFromURL(const String& url);
+    
+    // Aggiornamento da upload
+    bool updateFromUpload(Stream& stream, size_t size);
+    
+    // Stato aggiornamento
+    enum class OTAState {
+        IDLE,           // Pronto per aggiornamento
+        DOWNLOADING,    // Download in corso
+        UPLOADING,      // Upload in corso
+        WRITING,        // Scrittura flash in corso
+        VERIFYING,      // Verifica integrità
+        SUCCESS,        // Completato con successo
+        ERROR           // Errore
+    };
+    
+    OTAState getState() const;
+    int getProgress() const; // 0-100%
+    String getLastError() const;
+    
+    // Informazioni partizioni
+    String getCurrentPartition() const;
+    size_t getFreeSpace() const;
+    String getFirmwareVersion() const;
+};
+```
+
+### 10.7. Integrazione con il Sistema Esistente
+
+Il modulo OTA si integra perfettamente con il sistema esistente:
+
+* **Non Bloccante**: L'aggiornamento avviene in background, il sistema rimane responsive
+* **Modalità Offline**: Durante l'aggiornamento, le funzionalità di controllo LED rimangono attive fino al riavvio
+* **Display TFT**: Visualizzazione dello stato OTA sul display (opzionale)
+* **Log Serial**: Tutti gli eventi OTA vengono loggati per debugging
+* **EventLogger Integration**: Gli aggiornamenti OTA vengono registrati nell'EventLogger
+
+### 10.8. Workflow Tipico di Aggiornamento
+
+**Scenario 1 - Aggiornamento da URL Remoto:**
+
+1. L'utente accede a `http://device.local/ota`
+2. Inserisce l'URL: `https://myserver.com/firmware/v2.0.bin`
+3. Clicca su "Scarica e Aggiorna"
+4. Il sistema scarica il file mostrando il progress
+5. Una volta scaricato, scrive nella partizione OTA inattiva
+6. Completa la scrittura e riavvia automaticamente
+7. Il bootloader carica il nuovo firmware
+8. Il nuovo firmware viene confermato dopo 30 secondi di uptime stabile
+
+**Scenario 2 - Upload Locale:**
+
+1. L'utente accede a `http://device.local/ota`
+2. Trascina il file `firmware.bin` nell'area di upload (oppure clicca e seleziona)
+3. Il sistema verifica la dimensione del file
+4. Avvia l'upload mostrando il progress
+5. Scrive nella partizione OTA inattiva
+6. Completa e riavvia automaticamente
+7. Rollback automatico se il firmware è corrotto
+
+**Scenario 3 - Errore e Rollback:**
+
+1. Aggiornamento iniziato (da URL o upload)
+2. Nuovo firmware scritto correttamente
+3. Riavvio eseguito
+4. Il nuovo firmware non parte o crasha durante l'inizializzazione
+5. Il bootloader ESP32 rileva il problema
+6. Rollback automatico alla partizione precedente (funzionante)
+7. Il dispositivo riavvia con il firmware originale
+8. Log dell'errore disponibile per analisi
+
+### 10.9. Endpoint API REST
+
+Il modulo OTA espone i seguenti endpoint:
+
+```
+GET  /ota              → Interfaccia web OTA
+GET  /api/ota/info     → Info partizioni e versione corrente (JSON)
+POST /api/ota/url      → Avvia aggiornamento da URL
+POST /api/ota/upload   → Avvia aggiornamento da file upload
+GET  /api/ota/status   → Stato aggiornamento in corso (JSON)
+POST /api/ota/rollback → Forza rollback manuale (se disponibile)
+```
+
+### 10.10. Librerie Necessarie
+
+Per il modulo OTA sono necessarie le seguenti librerie (tutte built-in ESP32):
+
+| Libreria | Versione | Note |
+|----------|----------|------|
+| `Update` | Built-in ESP32 | Gestione aggiornamenti OTA |
+| `HTTPClient` | Built-in ESP32 | Download firmware da URL |
+| `esp_ota_ops` | Built-in ESP32 | API partizioni OTA |
+| `esp_partition` | Built-in ESP32 | Informazioni partizioni |
+| `WiFiClientSecure` | Built-in ESP32 | HTTPS support (opzionale) |
+
+### 10.11. Note Tecniche
+
+**Dimensione Massima Firmware:**
+- Con 4MB di flash, ogni partizione OTA ha circa 1.4-1.8 MB disponibili
+- Il firmware deve essere compilato con schema di partizioni appropriato
+
+**Compatibilità HTTPS:**
+- Per URL HTTPS è richiesto `WiFiClientSecure`
+- I certificati SSL non vengono verificati (mode insecure) per semplicità
+- Supporto solo TLS 1.2+
+
+**Performance:**
+- Download da URL: ~100-200 KB/s (dipende dalla rete)
+- Upload locale: ~300-500 KB/s
+- Scrittura flash: ~100 KB/s
+- Tempo totale tipico: 30-60 secondi per firmware di 1MB
+
+**Limitazioni:**
+- Durante l'aggiornamento il consumo di memoria RAM aumenta (~40KB buffer)
+- Connessione Wi-Fi deve rimanere stabile durante tutto il processo
+- Non è possibile annullare un aggiornamento una volta iniziata la scrittura flash

@@ -487,6 +487,10 @@ const char WIFI_STATUS_PAGE[] PROGMEM = R"rawliteral(
             <span class="nav-icon">📋</span>
             Logs
         </a>
+        <a href="/ota" class="nav-item">
+            <span class="nav-icon">🔄</span>
+            OTA
+        </a>
         <a href="/" class="nav-item active">
             <span class="nav-icon">ℹ️</span>
             Info
@@ -795,6 +799,10 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
         <a href="/logs" class="nav-item">
             <span class="nav-icon">📋</span>
             Logs
+        </a>
+        <a href="/ota" class="nav-item">
+            <span class="nav-icon">🔄</span>
+            OTA
         </a>
         <a href="/" class="nav-item">
             <span class="nav-icon">ℹ️</span>
@@ -1243,6 +1251,10 @@ const char WIFI_LOGS_PAGE[] PROGMEM = R"rawliteral(
         <a href="/logs" class="nav-item active">
             <span class="nav-icon">📋</span>
             Logs
+        </a>
+        <a href="/ota" class="nav-item">
+            <span class="nav-icon">🔄</span>
+            OTA
         </a>
         <a href="/" class="nav-item">
             <span class="nav-icon">ℹ️</span>

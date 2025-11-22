@@ -13,6 +13,7 @@
 #include "WiFiManager.h"
 #include "DisplayManager.h"
 #include "EventLogger.h"
+#include "OTAManager.h"
 #include "config.h"
 
 // Create an instance of the display
@@ -51,6 +52,9 @@ SmartLightController smartLight(motionDetector, lightSensor, ledController, &eve
 // WiFi manager instance
 WiFiManager wifiManager;
 
+// OTA manager instance (will be initialized after WiFi manager)
+OTAManager* otaManager = nullptr;
+
 // Display manager instance
 DisplayManager displayManager(tft);
 
@@ -84,6 +88,9 @@ void setup() {
 	
 	// Initialize Display Manager first (shows welcome screen)
 	displayManager.begin(1000); // Update every 1 second
+	
+	// Set LCD timeout from config (30 seconds default)
+	displayManager.setLCDTimeout(DEFAULT_LCD_TIMEOUT_MS);
 	
 	// Draw the bitmap at position (0, 0) - removed to use display manager instead
 	// tft.drawBitmap(0, 0, myBitmap, 128, 128, ST77XX_BLACK);
@@ -193,6 +200,25 @@ void setup() {
 	Serial.println("System components linked to WiFi Manager API");
 	Serial.println("===============================================\n");
 	
+	// Initialize OTA Manager (after WiFi Manager is ready)
+	Serial.println("\n========== INITIALIZING OTA MANAGER ==========");
+	// Wait for WebServer to be available
+	WebServer* webServer = wifiManager.getWebServer();
+	if (webServer) {
+		otaManager = new OTAManager(*webServer);
+		if (!otaManager->begin()) {
+			Serial.println("ERROR: Failed to initialize OTA Manager!");
+			delete otaManager;
+			otaManager = nullptr;
+		} else {
+			Serial.println("OTA Manager initialized successfully");
+			Serial.println("Access OTA interface at: http://<device-ip>/ota");
+		}
+	} else {
+		Serial.println("WARNING: WebServer not available yet, OTA will be initialized when WiFi connects");
+	}
+	Serial.println("==============================================\n");
+	
 	// Configure NTP for timestamps (will sync when WiFi connects)
 	configTime(3600, 3600, "pool.ntp.org", "time.nist.gov");  // GMT+1 (Italy), DST +1h
 	Serial.println("NTP time sync configured (will sync when WiFi connected)");
@@ -205,6 +231,29 @@ void loop() {
   
   // Update WiFi Manager (handles reconnection, captive portal, etc.)
   wifiManager.update();
+  
+  // Initialize OTA Manager if it wasn't initialized and WiFi is now connected
+  static bool otaInitAttempted = false;
+  if (!otaManager && wifiManager.isConnected() && !otaInitAttempted) {
+    Serial.println("\n[OTA] WiFi connected, initializing OTA Manager...");
+    WebServer* webServer = wifiManager.getWebServer();
+    if (webServer) {
+      otaManager = new OTAManager(*webServer);
+      if (otaManager->begin()) {
+        Serial.println("[OTA] OTA Manager initialized successfully");
+        Serial.println("[OTA] Access OTA at: http://" + wifiManager.getIPAddress().toString() + "/ota");
+      } else {
+        delete otaManager;
+        otaManager = nullptr;
+      }
+    }
+    otaInitAttempted = true;
+  }
+  
+  // Update OTA Manager if initialized
+  if (otaManager) {
+    otaManager->update();
+  }
   
   // Read light level every 500ms
   static unsigned long lastLightRead = 0;
@@ -226,6 +275,7 @@ void loop() {
   static unsigned long lastButtonPress = 0;
   if (millis() - lastButtonPress > 500) { // Debounce buttons
     if (digitalRead(BTN_R) == LOW) {
+      displayManager.wakeDisplay();  // Wake display on button press
       Serial.println("\n[RED BTN] Recalibrating IMU...");
       motionDetector.calibrate();
       printCalibrationValues();
@@ -234,6 +284,7 @@ void loop() {
       Serial.println("Configuration saved after calibration");
       lastButtonPress = millis();
     } else if (digitalRead(BTN_L) == LOW) {
+      displayManager.wakeDisplay();  // Wake display on button press
       Serial.println("\n[BLUE BTN] Printing statistics...");
       printStatistics();
       printLightStatus();
@@ -246,6 +297,7 @@ void loop() {
       }
       lastButtonPress = millis();
     } else if (digitalRead(BTN_C) == LOW) {
+      displayManager.wakeDisplay();  // Wake display on button press
       Serial.println("\n[GREEN BTN] Testing LED...");
       testLED();
       lastButtonPress = millis();
@@ -348,11 +400,16 @@ void printInstructions() {
   Serial.println("  R - Return to auto mode");
   Serial.println("  s - Show statistics");
   Serial.println("  c - Recalibrate");
+  Serial.println("  t<value> - Set LCD timeout seconds (e.g., t30) [0=always on]");
+  Serial.println("  T - Wake display (turn backlight on)");
   Serial.println("  h - Show this help");
   Serial.println("\nWiFi Commands:");
   Serial.println("  W - Show WiFi status");
   Serial.println("  X - Reset WiFi credentials (factory reset)");
   Serial.println("  Z - Force WiFi reconnection");
+  Serial.println("\nOTA Commands:");
+  Serial.println("  U - Show OTA update status");
+  Serial.println("  T - Trigger OTA rollback (if available)");
   Serial.println("\nLog Commands:");
   Serial.println("  E - Show event logs");
   Serial.println("  C - Clear all event logs");
@@ -518,6 +575,19 @@ void handleSerialCommands() {
       case 'h': // Help
         printInstructions();
         break;
+      case 't': // Set LCD timeout
+        {
+          unsigned long timeoutSec = Serial.parseInt();
+          displayManager.setLCDTimeout(timeoutSec * 1000);
+          Serial.print("LCD timeout set to: ");
+          if (timeoutSec == 0) {
+            Serial.println("DISABLED (always on)");
+          } else {
+            Serial.print(timeoutSec);
+            Serial.println(" seconds");
+          }
+        }
+        break;
       case 'W': // WiFi status
         printWiFiStatus();
         break;
@@ -538,6 +608,12 @@ void handleSerialCommands() {
         Serial.println("\n!!! CLEARING ALL EVENT LOGS !!!");
         eventLogger.clearAll();
         Serial.println("All logs cleared");
+        break;
+      case 'U': // OTA status
+        printOTAStatus();
+        break;
+      case 'T': // OTA rollback
+        performOTARollback();
         break;
     }
     // Clear remaining buffer
@@ -621,3 +697,84 @@ void printEventLogs() {
   
   Serial.println("================================\n");
 }
+
+void printOTAStatus() {
+  Serial.println("\n========== OTA STATUS ==========");
+  
+  if (!otaManager) {
+    Serial.println("OTA Manager: NOT INITIALIZED");
+    Serial.println("OTA will be available when WiFi connects");
+  } else {
+    Serial.print("State: ");
+    Serial.println(otaManager->getStateString());
+    
+    Serial.print("Current Partition: ");
+    Serial.println(otaManager->getCurrentPartition());
+    
+    Serial.print("Available Space: ");
+    Serial.print(otaManager->getAvailableSpace());
+    Serial.println(" bytes");
+    
+    Serial.print("Max Firmware Size: ");
+    Serial.print(otaManager->getMaxFirmwareSize());
+    Serial.println(" bytes");
+    
+    Serial.print("Can Rollback: ");
+    Serial.println(otaManager->canRollback() ? "YES" : "NO");
+    
+    if (otaManager->getLastError() != OTAManager::OTAError::NONE) {
+      Serial.print("Last Error: ");
+      Serial.println(otaManager->getLastErrorString());
+    }
+    
+    if (wifiManager.isConnected()) {
+      Serial.print("\nOTA Web Interface: http://");
+      Serial.print(wifiManager.getIPAddress().toString());
+      Serial.println("/ota");
+    }
+  }
+  
+  Serial.println("================================\n");
+}
+
+void performOTARollback() {
+  Serial.println("\n========== OTA ROLLBACK ==========");
+  
+  if (!otaManager) {
+    Serial.println("ERROR: OTA Manager not initialized");
+    return;
+  }
+  
+  if (!otaManager->canRollback()) {
+    Serial.println("ERROR: No previous firmware available for rollback");
+    return;
+  }
+  
+  Serial.println("WARNING: This will reboot the device!");
+  Serial.println("Type 'Y' within 5 seconds to confirm rollback...");
+  
+  unsigned long startTime = millis();
+  while (millis() - startTime < 5000) {
+    if (Serial.available()) {
+      char confirm = Serial.read();
+      if (confirm == 'Y' || confirm == 'y') {
+        Serial.println("\n!!! PERFORMING ROLLBACK !!!");
+        Serial.println("Device will reboot...");
+        delay(1000);
+        
+        if (otaManager->rollback()) {
+          // Will not reach here as rollback() reboots
+        } else {
+          Serial.println("ERROR: Rollback failed");
+          Serial.println(otaManager->getLastErrorString());
+        }
+        return;
+      }
+    }
+    delay(100);
+  }
+  
+  Serial.println("Rollback cancelled (timeout)");
+  Serial.println("==================================\n");
+}
+

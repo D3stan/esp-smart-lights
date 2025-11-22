@@ -82,3 +82,11 @@
 #define LOG_PREFS_NAMESPACE "event_logs"       // Namespace for event logs
 #define MAX_LOG_ENTRIES 100                    // Maximum number of log entries to store
 #define LOG_RETENTION_DAYS 7                   // Keep logs for 7 days
+
+// ========== Display Power Management ==========
+// LCD backlight auto-off for battery saving
+
+#define DEFAULT_LCD_TIMEOUT_MS 30000           // Default timeout before LCD off (30 seconds)
+#define CONFIG_LCD_TIMEOUT_KEY "lcd_timeout"   // Preferences key for LCD timeout
+#define LCD_WAKE_ON_MOTION true                // Wake display when motion is detected
+#define LCD_WAKE_ON_STATE_CHANGE true          // Wake display when LED/WiFi state changes
