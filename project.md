@@ -648,3 +648,231 @@ Per il modulo OTA sono necessarie le seguenti librerie (tutte built-in ESP32):
 - Durante l'aggiornamento il consumo di memoria RAM aumenta (~40KB buffer)
 - Connessione Wi-Fi deve rimanere stabile durante tutto il processo
 - Non è possibile annullare un aggiornamento una volta iniziata la scrittura flash
+
+---
+
+## 11. Ottimizzazioni e Pulizia del Codice (Novembre 2025)
+
+### 11.1. Riorganizzazione della Struttura del Progetto
+
+Il progetto è stato ottimizzato per migliorare la leggibilità, manutenibilità e separazione delle responsabilità.
+
+#### 11.1.1. Creazione di DebugHelper.h
+
+**Motivazione**: Il file principale `esp-smart-lights.ino` conteneva numerose funzioni di stampa e debug che intasavano il codice principale, rendendo difficile la lettura della logica di business.
+
+**Soluzione**: Creazione di un modulo helper dedicato (`DebugHelper.h`) che incapsula tutte le funzioni di debugging e stampa:
+
+**Funzioni spostate:**
+- `printCalibrationValues()` - Stampa valori di calibrazione IMU
+- `printStatistics()` - Stampa statistiche di movimento
+- `printLightStatus()` - Stampa stato sensore di luce
+- `testLED()` - Sequenza di test per LED strip
+- `printWiFiStatus()` - Stampa stato dettagliato Wi-Fi
+- `printEventLogs()` - Stampa log degli eventi
+- `printOTAStatus()` - Stampa stato aggiornamento OTA
+
+**Namespace**: Tutte le funzioni sono racchiuse nel namespace `DebugHelper::` per evitare conflitti di nomi.
+
+#### 11.1.2. Rimozione Comandi Seriali
+
+**Motivazione**: L'interfaccia seriale con comandi interattivi era utile durante lo sviluppo ma non necessaria in produzione. Tutti i parametri sono ora configurabili tramite la dashboard web.
+
+**Rimosso**:
+- Funzione `handleSerialCommands()` e tutto il relativo switch-case
+- Funzione `printInstructions()` con la lista dei comandi
+- Print continui di `printMotionStatus()` (ogni 100ms) che intasavano il Serial Monitor
+- Print continui di `printSmartLightStatus()` (ogni 1000ms)
+
+**Mantenuto**:
+- Log essenziali durante l'inizializzazione dei componenti
+- Log delle azioni dei bottoni fisici
+- Log degli eventi critici (connessione Wi-Fi, errori, ecc.)
+
+#### 11.1.3. Miglioramento Gestione Bottoni Fisici
+
+**Problema**: I bottoni eseguivano sempre le loro azioni, anche quando il display era spento, e non c'era feedback visivo chiaro delle azioni.
+
+**Soluzione implementata:**
+
+**1. Wake-on-Press**: 
+- Se il display è spento, la pressione di qualsiasi bottone lo risveglia SENZA eseguire l'azione
+- L'azione viene eseguita solo se il display è già acceso
+- Previene esecuzioni accidentali quando il dispositivo è in standby
+
+**2. Feedback Visivo su Display**:
+- Utilizzo del nuovo metodo `displayManager.showMessage()` per mostrare messaggi temporanei
+- Ogni azione del bottone mostra un messaggio di conferma sul display
+- Esempi:
+  * RED BTN: "Calibrating IMU..." → "IMU Calibrated!"
+  * BLUE BTN: "Light Bypass: ON" / "Light Bypass: OFF"
+  * GREEN BTN: "Testing LED..." → "Test Complete!"
+
+**3. Etichette Permanenti sul Display**:
+- Aggiunto metodo `drawButtonLabels()` in DisplayManager
+- Le etichette vengono disegnate permanentemente nella riga superiore del display:
+  * Sinistra (BTN_L/0) - "Lgt" (Light bypass) - Colore CIANO
+  * Centro (BTN_C/47) - "Tst" (Test LED) - Colore VERDE
+  * Destra (BTN_R/48) - "Cal" (Calibrate) - Colore ROSSO
+- Le etichette vengono ridisegnate automaticamente durante `forceUpdate()`
+
+**Mappatura Bottoni**:
+```
+      [Cal]      [Tst]      [Lgt]
+        RED      GREEN      BLUE
+     (BTN_R)    (BTN_C)    (BTN_L)
+       Pin48      Pin47      Pin0
+```
+
+### 11.2. Nuove Funzionalità Dashboard Web
+
+#### 11.2.1. Controllo Luminosità LED
+
+**Problema**: Non era possibile regolare la luminosità dei LED dalla dashboard web, solo accenderli/spegnerli.
+
+**Soluzione**:
+
+**1. Slider per LED Strip**:
+- Range: 0-255 (valore PWM)
+- Aggiornamento in tempo reale del valore visualizzato
+- Pulsante "Applica Luminosità" per inviare le modifiche
+
+**2. Slider per RGB LED Integrato**:
+- Range: 0-255
+- Controllo indipendente dalla striscia LED
+- Utile per regolare la luminosità del LED di stato
+
+**3. Nuovo Endpoint API**: `/api/brightness`
+- Metodo: POST
+- Payload JSON: 
+  ```json
+  {
+    "led_brightness": 255,
+    "rgb_brightness": 64
+  }
+  ```
+- Risposta:
+  ```json
+  {
+    "success": true,
+    "message": "Brightness updated"
+  }
+  ```
+
+**Implementazione**:
+- Aggiunto metodo `handleApiBrightness()` in `WiFiManager.cpp`
+- Funzioni JavaScript `updateBrightnessDisplay()` e `saveBrightness()` in `WiFiPages.h`
+- Slider HTML5 con input type="range" per un'interfaccia touch-friendly
+
+#### 11.2.2. Interfaccia Dashboard Migliorata
+
+**Layout Sezione LED Control**:
+```
+┌─────────────────────────────────────┐
+│ 🎮 Controllo LED                    │
+├─────────────────────────────────────┤
+│ Modalità: [AUTO] [ON] [OFF]        │
+│                                      │
+│ Luminosità LED Strip:                │
+│ ━━━━━━━━●━━━━━━━━━━━━━━━ 255       │
+│                                      │
+│ Luminosità RGB LED:                  │
+│ ━━━━●━━━━━━━━━━━━━━━━━━━ 64        │
+│                                      │
+│ [💡 Applica Luminosità]             │
+└─────────────────────────────────────┘
+```
+
+### 11.3. DisplayManager - Nuove Funzionalità
+
+#### 11.3.1. Metodo showMessage()
+
+**Firma**: `void showMessage(const String& message, unsigned long durationMs = 2000)`
+
+**Funzionalità**:
+- Mostra un messaggio temporaneo al centro del display
+- Risveglia automaticamente il display se spento
+- Il messaggio rimane visualizzato per il tempo specificato
+- Al termine, il display torna alla visualizzazione normale
+- Utile per feedback delle azioni utente
+
+**Implementazione**:
+- Variabili di stato: `_tempMessage`, `_tempMessageEndTime`, `_showingTempMessage`
+- Durante la visualizzazione del messaggio, gli aggiornamenti normali vengono sospesi
+- Controllo automatico della scadenza nel metodo `update()`
+
+#### 11.3.2. Metodo isDisplayOn()
+
+**Firma**: `bool isDisplayOn() const`
+
+**Funzionalità**:
+- Ritorna lo stato corrente del backlight del display
+- Utilizzato per implementare il wake-on-press dei bottoni
+- Permette di verificare se il display è in modalità power saving
+
+### 11.4. Struttura File Aggiornata
+
+**File Aggiunti**:
+- `DebugHelper.h` - Funzioni helper per debugging (namespace DebugHelper)
+
+**File Modificati**:
+- `esp-smart-lights.ino` - Pulizia codice, rimozione comandi seriali, miglioramento gestione bottoni
+- `DisplayManager.h/.cpp` - Aggiunta `showMessage()`, `drawButtonLabels()`, `isDisplayOn()`
+- `WiFiManager.h/.cpp` - Aggiunta `handleApiBrightness()` per controllo luminosità
+- `WiFiPages.h` - Aggiunta sezione brightness control con slider
+- `project.md` - Aggiornamento documentazione
+
+### 11.5. Vantaggi delle Modifiche
+
+**Manutenibilità**:
+- Codice più pulito e organizzato
+- Funzioni di debug separate dalla logica di business
+- Più facile navigare e comprendere il codice
+
+**User Experience**:
+- Feedback visivo chiaro per tutte le azioni
+- Etichette permanenti rendono i bottoni auto-esplicativi
+- Wake-on-press previene azioni accidentali
+- Controllo completo dalla dashboard web
+
+**Produzione**:
+- Nessuna dipendenza da interfaccia seriale
+- Tutte le configurazioni accessibili via web
+- Sistema completamente standalone
+
+**Performance**:
+- Ridotto traffico sulla seriale (meno print continui)
+- Display aggiornato solo quando necessario
+- Gestione intelligente dei messaggi temporanei
+
+### 11.6. Comandi Seriali Rimossi
+
+I seguenti comandi sono stati rimossi (funzionalità ora disponibili solo via web):
+
+| Comando | Funzione | Alternativa Web |
+|---------|----------|-----------------|
+| `a<val>` | Imposta soglia accelerometro | Dashboard → Configurazione |
+| `g<val>` | Imposta soglia giroscopio | Dashboard → Configurazione |
+| `w<val>` | Imposta finestra movimento | *Non più necessario* |
+| `p<val>` | Imposta conteggio impulsi | *Non più necessario* |
+| `l<val>` | Imposta soglia lux | Dashboard → Configurazione |
+| `L<val>` | Imposta luminosità LED | Dashboard → Controllo LED → Slider |
+| `d<val>` | Imposta ritardo spegnimento | Dashboard → Configurazione |
+| `A` | Toggle auto mode | Dashboard → Controllo LED → Mode |
+| `B` | Toggle light sensor bypass | Bottone fisico BLUE |
+| `O` | Forza LED ON | Dashboard → Controllo LED → ON |
+| `F` | Forza LED OFF | Dashboard → Controllo LED → OFF |
+| `R` | Ritorna a modo auto | Dashboard → Controllo LED → AUTO |
+| `s` | Mostra statistiche | *Rimosso* |
+| `c` | Ricalibra IMU | Bottone fisico RED |
+| `t<val>` | Imposta timeout LCD | *Non più necessario* |
+| `W` | Mostra stato WiFi | Dashboard → Info |
+| `X` | Reset credenziali WiFi | Bottone fisico CENTER (hold 5s) |
+| `Z` | Forza riconnessione WiFi | *Automatico* |
+| `E` | Mostra event logs | Dashboard → Logs |
+| `C` | Cancella event logs | Dashboard → Logs |
+| `U` | Mostra stato OTA | Dashboard → OTA |
+| `T` | Trigger OTA rollback | Dashboard → OTA |
+| `h` | Mostra help | *Rimosso* |
+
+---

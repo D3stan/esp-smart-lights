@@ -14,6 +14,7 @@
 #include "DisplayManager.h"
 #include "EventLogger.h"
 #include "OTAManager.h"
+#include "DebugHelper.h"
 #include "config.h"
 
 // Create an instance of the display
@@ -57,6 +58,9 @@ OTAManager* otaManager = nullptr;
 
 // Display manager instance
 DisplayManager displayManager(tft);
+
+// Global variables for brightness control
+uint8_t currentRgbBrightness = RGB_BRIGHTNESS;  // Current RGB LED brightness
 
 void setup() {
 
@@ -123,8 +127,12 @@ void setup() {
 	motionDetector.calibrate();
 	Serial.println("Calibration complete!");
 	Serial.println("====================================\n");
-	printCalibrationValues();
-	printInstructions();
+	DebugHelper::printCalibrationValues(motionDetector);
+	
+	Serial.println("\n====== SYSTEM READY ======");
+	Serial.println("Buttons: RED=Calibrate | BLUE=Toggle Light Bypass | GREEN=Test LED");
+	Serial.println("All configuration available via Web Dashboard");
+	Serial.println("=========================\n");
 	
 	// Initialize Light Sensor (BH1750)
 	Serial.println("\n========== INITIALIZING LIGHT SENSOR ==========");
@@ -168,6 +176,17 @@ void setup() {
 	Serial.println("\n========== INITIALIZING SMART LIGHT CONTROLLER ==========");
 	smartLight.begin(LED_SHUTOFF_DELAY_MS); // Load config and set shutoff delay
     smartLight.setLightSensorBypass(true);
+	
+	// Load saved brightness values from Preferences
+	Preferences prefs;
+	prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
+	uint8_t savedLedBrightness = prefs.getUChar(CONFIG_LED_BRIGHTNESS_KEY, DEFAULT_LED_BRIGHTNESS);
+	currentRgbBrightness = prefs.getUChar(CONFIG_RGB_BRIGHTNESS_KEY, DEFAULT_RGB_BRIGHTNESS);
+	prefs.end();
+	
+	ledController.setBrightness(savedLedBrightness);
+	Serial.print("Loaded LED brightness: "); Serial.println(savedLedBrightness);
+	Serial.print("Loaded RGB brightness: "); Serial.println(currentRgbBrightness);
 	Serial.println("Smart Light Controller initialized");
 	Serial.print("Auto Mode: "); Serial.println(smartLight.isAutoModeEnabled() ? "ENABLED" : "DISABLED");
 	Serial.print("Shutoff Delay: "); Serial.print(smartLight.getShutoffDelay() / 1000); Serial.println(" seconds");
@@ -196,7 +215,7 @@ void setup() {
 	}
 	
 	// Link system components to WiFi Manager for API
-	wifiManager.setSystemComponents(&smartLight, &lightSensor, &motionDetector, &ledController, &eventLogger);
+	wifiManager.setSystemComponents(&smartLight, &lightSensor, &motionDetector, &ledController, &eventLogger, &currentRgbBrightness);
 	Serial.println("System components linked to WiFi Manager API");
 	Serial.println("===============================================\n");
 	
@@ -226,9 +245,6 @@ void setup() {
 }
 
 void loop() {
-  // Check for serial commands
-  handleSerialCommands();
-  
   // Update WiFi Manager (handles reconnection, captive portal, etc.)
   wifiManager.update();
   
@@ -271,510 +287,77 @@ void loop() {
   // Update display with all current information
   displayManager.update(wifiManager, lightSensor, motionDetector, ledController);
   
-  // Button controls (check without blocking LED updates)
+  // Button controls with wake-on-press functionality
   static unsigned long lastButtonPress = 0;
   if (millis() - lastButtonPress > 500) { // Debounce buttons
+    bool btnPressed = false;
+    
     if (digitalRead(BTN_R) == LOW) {
-      displayManager.wakeDisplay();  // Wake display on button press
-      Serial.println("\n[RED BTN] Recalibrating IMU...");
-      motionDetector.calibrate();
-      printCalibrationValues();
-      // Save updated configuration to persistent storage
-      smartLight.saveConfiguration();
-      Serial.println("Configuration saved after calibration");
+      btnPressed = true;
+      if (!displayManager.isDisplayOn()) {
+        // Just wake display, don't execute action
+        displayManager.wakeDisplay();
+        Serial.println("[BTN] Display woken by RED button");
+      } else {
+        // Display is on, execute action
+        Serial.println("\n[RED BTN] Recalibrating IMU...");
+        displayManager.showMessage("Calibrating IMU...", 2000);
+        motionDetector.calibrate();
+        DebugHelper::printCalibrationValues(motionDetector);
+        smartLight.saveConfiguration();
+        Serial.println("Configuration saved after calibration");
+        displayManager.showMessage("IMU Calibrated!", 2000);
+      }
       lastButtonPress = millis();
     } else if (digitalRead(BTN_L) == LOW) {
-      displayManager.wakeDisplay();  // Wake display on button press
-      Serial.println("\n[BLUE BTN] Printing statistics...");
-      printStatistics();
-      printLightStatus();
-      bool currentBypass = smartLight.isLightSensorBypassed();
-      smartLight.setLightSensorBypass(!currentBypass);
-      Serial.print("Light sensor bypass: "); 
-      Serial.println(smartLight.isLightSensorBypassed() ? "ENABLED (always night)" : "DISABLED (normal)");
-      if (smartLight.isLightSensorBypassed()) {
-        Serial.println("*** Testing mode: LED control based on IMU ONLY ***");
+      btnPressed = true;
+      if (!displayManager.isDisplayOn()) {
+        // Just wake display, don't execute action
+        displayManager.wakeDisplay();
+        Serial.println("[BTN] Display woken by BLUE button");
+      } else {
+        // Display is on, execute action
+        bool currentBypass = smartLight.isLightSensorBypassed();
+        smartLight.setLightSensorBypass(!currentBypass);
+        Serial.print("\n[BLUE BTN] Light sensor bypass: "); 
+        Serial.println(smartLight.isLightSensorBypassed() ? "ENABLED" : "DISABLED");
+        if (smartLight.isLightSensorBypassed()) {
+          displayManager.showMessage("Light Bypass: ON", 2000);
+          Serial.println("*** Testing mode: LED control based on IMU ONLY ***");
+        } else {
+          displayManager.showMessage("Light Bypass: OFF", 2000);
+        }
+        DebugHelper::printStatistics(motionDetector);
+        DebugHelper::printLightStatus(lightSensor);
       }
       lastButtonPress = millis();
     } else if (digitalRead(BTN_C) == LOW) {
-      displayManager.wakeDisplay();  // Wake display on button press
-      Serial.println("\n[GREEN BTN] Testing LED...");
-      testLED();
+      btnPressed = true;
+      if (!displayManager.isDisplayOn()) {
+        // Just wake display, don't execute action
+        displayManager.wakeDisplay();
+        Serial.println("[BTN] Display woken by GREEN button");
+      } else {
+        // Display is on, execute action
+        Serial.println("\n[GREEN BTN] Testing LED...");
+        displayManager.showMessage("Testing LED...", 2000);
+        DebugHelper::testLED(ledController);
+        displayManager.showMessage("Test Complete!", 2000);
+      }
       lastButtonPress = millis();
     }
   }
   
   // Update RGB LED based on motion (this should always reflect motion state)
+  // Use currentRgbBrightness instead of RGB_BRIGHTNESS constant
   if (isMoving) {
-    neopixelWrite(RGB_BUILTIN, 0, RGB_BRIGHTNESS, 0); // Green = moving
+    neopixelWrite(RGB_BUILTIN, 0, currentRgbBrightness, 0); // Green = moving
   } else {
-    neopixelWrite(RGB_BUILTIN, RGB_BRIGHTNESS, 0, 0); // Red = stationary
-  }
-  
-  // Print motion status (every 100ms to avoid flooding)
-  static unsigned long lastPrint = 0;
-  if (millis() - lastPrint > 100) {
-    printMotionStatus();
-    lastPrint = millis();
-  }
-  
-  // Print smart light status (every 1000ms)
-  static unsigned long lastSmartPrint = 0;
-  if (millis() - lastSmartPrint > 1000) {
-    printSmartLightStatus();
-    lastSmartPrint = millis();
+    neopixelWrite(RGB_BUILTIN, currentRgbBrightness, 0, 0); // Red = stationary
   }
   
   delay(20); // ~50 Hz loop rate
 }
 
-// ========== PRINTING FUNCTIONS ==========
-void printMotionStatus() {
-  if (!motionDetector.isCalibrated()) return;
-  
-  float acc_dev = motionDetector.getCurrentAccDeviation();
-  float gyro_dev = motionDetector.getCurrentGyroDeviation();
-  
-  // For Serial Plotter (comment out Serial.print text to use plotter)
-  Serial.print("AccDev:");
-  Serial.print(acc_dev, 4);
-  Serial.print(" AccThreshold:");
-  Serial.print(motionDetector.getAccThreshold(), 4);
-  Serial.print(" GyroDev:");
-  Serial.print(gyro_dev, 2);
-  Serial.print(" GyroThreshold:");
-  Serial.print(motionDetector.getGyroThreshold(), 2);
-  Serial.print(" Moving:");
-  Serial.println(motionDetector.isMoving() ? 1 : 0);
-}
 
-void printCalibrationValues() {
-  float acc_x, acc_y, acc_z;
-  float gyro_x, gyro_y, gyro_z;
-  
-  motionDetector.getAccBaseline(acc_x, acc_y, acc_z);
-  motionDetector.getGyroBaseline(gyro_x, gyro_y, gyro_z);
-  
-  Serial.println("\n--- Baseline Values (at rest) ---");
-  Serial.print("Acc: X="); Serial.print(acc_x, 4);
-  Serial.print(" Y="); Serial.print(acc_y, 4);
-  Serial.print(" Z="); Serial.println(acc_z, 4);
-  Serial.print("Gyro: X="); Serial.print(gyro_x, 2);
-  Serial.print(" Y="); Serial.print(gyro_y, 2);
-  Serial.print(" Z="); Serial.println(gyro_z, 2);
-  Serial.println("---------------------------------\n");
-}
-
-void printStatistics() {
-  Serial.println("\n========== MOTION STATISTICS ==========");
-  Serial.print("Max Acc Deviation: "); Serial.print(motionDetector.getMaxAccDeviation(), 4); Serial.println(" g");
-  Serial.print("Max Gyro Deviation: "); Serial.print(motionDetector.getMaxGyroDeviation(), 2); Serial.println(" dps");
-  Serial.println("\nCurrent Thresholds:");
-  Serial.print("  ACC_MOTION_THRESHOLD = "); Serial.print(motionDetector.getAccThreshold(), 4); Serial.println(" g");
-  Serial.print("  GYRO_MOTION_THRESHOLD = "); Serial.print(motionDetector.getGyroThreshold(), 2); Serial.println(" dps");
-  Serial.print("  MOTION_WINDOW_MS = "); Serial.print(motionDetector.getMotionWindowMs()); Serial.println(" ms");
-  Serial.print("  MOTION_PULSE_COUNT = "); Serial.print(motionDetector.getMotionPulseCount()); Serial.println(" pulses");
-  Serial.print("  Current Pulse Count = "); Serial.println(motionDetector.getCurrentPulseCount());
-  Serial.println("========================================\n");
-}
-
-void printInstructions() {
-  Serial.println("\n====== IMU MOTION DETECTION READY ======");
-  Serial.println("LED: RED=Stationary, GREEN=Moving");
-  Serial.println("\nButtons:");
-  Serial.println("  RED (BTN_R): Recalibrate baseline");
-  Serial.println("  BLUE (BTN_L): Show statistics & light status");
-  Serial.println("  GREEN (BTN_C): Test LED strip");
-  Serial.println("\nSerial Commands:");
-  Serial.println("  a<value> - Set acc threshold (e.g., a0.05)");
-  Serial.println("  g<value> - Set gyro threshold (e.g., g3.0)");
-  Serial.println("  w<value> - Set motion window ms (e.g., w300)");
-  Serial.println("  p<value> - Set pulse count needed (e.g., p2)");
-  Serial.println("  l<value> - Set night threshold lux (e.g., l10.0)");
-  Serial.println("  L<value> - Set LED brightness (e.g., L255) [manual mode]");
-  Serial.println("  d<value> - Set shutoff delay seconds (e.g., d30)");
-  Serial.println("  A - Toggle auto mode (enable/disable)");
-  Serial.println("  B - Toggle light sensor bypass (test with IMU only)");
-  Serial.println("  O - Force LED ON (manual override)");
-  Serial.println("  F - Force LED OFF (manual override)");
-  Serial.println("  R - Return to auto mode");
-  Serial.println("  s - Show statistics");
-  Serial.println("  c - Recalibrate");
-  Serial.println("  t<value> - Set LCD timeout seconds (e.g., t30) [0=always on]");
-  Serial.println("  T - Wake display (turn backlight on)");
-  Serial.println("  h - Show this help");
-  Serial.println("\nWiFi Commands:");
-  Serial.println("  W - Show WiFi status");
-  Serial.println("  X - Reset WiFi credentials (factory reset)");
-  Serial.println("  Z - Force WiFi reconnection");
-  Serial.println("\nOTA Commands:");
-  Serial.println("  U - Show OTA update status");
-  Serial.println("  T - Trigger OTA rollback (if available)");
-  Serial.println("\nLog Commands:");
-  Serial.println("  E - Show event logs");
-  Serial.println("  C - Clear all event logs");
-  Serial.println("========================================\n");
-}
-
-void printLightStatus() {
-  Serial.println("\n--- Light Sensor Status ---");
-  Serial.print("Current Lux: "); Serial.print(lightSensor.getLastLux(), 1); Serial.println(" lux");
-  Serial.print("Night Threshold: "); Serial.print(lightSensor.getNightThreshold(), 1); Serial.println(" lux");
-  Serial.print("Is Night: "); Serial.println(lightSensor.isNight() ? "YES" : "NO");
-  Serial.print("Sensor Ready: "); Serial.println(lightSensor.isReady() ? "YES" : "NO");
-  Serial.println("---------------------------\n");
-}
-
-void testLED() {
-  Serial.println("LED Test Sequence:");
-  Serial.println("  25% brightness...");
-  ledController.setBrightness(64);
-  delay(500);
-  Serial.println("  50% brightness...");
-  ledController.setBrightness(128);
-  delay(500);
-  Serial.println("  100% brightness...");
-  ledController.setBrightness(255);
-  delay(500);
-  Serial.println("  Fading off...");
-  ledController.fadeTo(0, 1000);
-  Serial.println("LED Test Complete");
-}
-
-void printSmartLightStatus() {
-  Serial.print("[SMART] State:");
-  Serial.print(smartLight.getStateString());
-  Serial.print(" | AutoMode:");
-  Serial.print(smartLight.isAutoModeEnabled() ? "ON" : "OFF");
-  
-  if (smartLight.isLightSensorBypassed()) {
-    Serial.print(" | Night:BYPASS");
-  } else {
-    Serial.print(" | Night:");
-    Serial.print(lightSensor.isNight() ? "YES" : "NO");
-  }
-  
-  Serial.print(" | Motion:");
-  Serial.print(motionDetector.isMoving() ? "YES" : "NO");
-  Serial.print(" | LED:");
-  Serial.print(ledController.isOn() ? "ON" : "OFF");
-  
-  if (smartLight.isInCountdown()) {
-    Serial.print(" | Countdown:");
-    Serial.print(smartLight.getCountdownRemaining() / 1000);
-    Serial.print("s");
-  }
-  
-  Serial.println();
-}
-
-void handleSerialCommands() {
-  if (Serial.available() > 0) {
-    char cmd = Serial.read();
-    
-    switch(cmd) {
-      case 'a': // Accelerometer threshold
-        {
-          float threshold = Serial.parseFloat();
-          motionDetector.setAccThreshold(threshold);
-          Serial.print("ACC_MOTION_THRESHOLD set to: "); Serial.println(threshold, 4);
-        }
-        break;
-      case 'g': // Gyroscope threshold
-        {
-          float threshold = Serial.parseFloat();
-          motionDetector.setGyroThreshold(threshold);
-          Serial.print("GYRO_MOTION_THRESHOLD set to: "); Serial.println(threshold, 2);
-        }
-        break;
-      case 'w': // Motion window time
-        {
-          unsigned long windowMs = Serial.parseInt();
-          motionDetector.setMotionWindowMs(windowMs);
-          Serial.print("MOTION_WINDOW_MS set to: "); Serial.println(windowMs);
-        }
-        break;
-      case 'p': // Pulse count
-        {
-          int pulseCount = Serial.parseInt();
-          motionDetector.setMotionPulseCount(pulseCount);
-          Serial.print("MOTION_PULSE_COUNT set to: "); Serial.println(pulseCount);
-        }
-        break;
-      case 'l': // Light threshold
-        {
-          float threshold = Serial.parseFloat();
-          lightSensor.setNightThreshold(threshold);
-          Serial.print("NIGHT_THRESHOLD set to: "); Serial.print(threshold, 1); Serial.println(" lux");
-        }
-        break;
-      case 'L': // LED brightness
-        {
-          int brightness = Serial.parseInt();
-          if (brightness >= 0 && brightness <= 255) {
-            ledController.setBrightness(brightness);
-            Serial.print("LED brightness set to: "); Serial.println(brightness);
-          } else {
-            Serial.println("ERROR: Brightness must be 0-255");
-          }
-        }
-        break;
-      case 's': // Show statistics
-        printStatistics();
-        printLightStatus();
-        break;
-      case 'c': // Calibrate
-        Serial.println("Recalibrating... keep still!");
-        delay(500);
-        motionDetector.calibrate();
-        printCalibrationValues();
-        break;
-      case 'd': // Shutoff delay
-        {
-          unsigned long delaySec = Serial.parseInt();
-          if (delaySec > 0) {
-            smartLight.setShutoffDelay(delaySec * 1000);
-            Serial.print("Shutoff delay set to: "); Serial.print(delaySec); Serial.println(" seconds");
-          } else {
-            Serial.println("ERROR: Delay must be > 0");
-          }
-        }
-        break;
-      case 'A': // Toggle auto mode
-        {
-          bool currentAuto = smartLight.isAutoModeEnabled();
-          smartLight.setAutoMode(!currentAuto);
-          Serial.print("Auto mode: "); Serial.println(smartLight.isAutoModeEnabled() ? "ENABLED" : "DISABLED");
-        }
-        break;
-      case 'B': // Toggle light sensor bypass
-        {
-          bool currentBypass = smartLight.isLightSensorBypassed();
-          smartLight.setLightSensorBypass(!currentBypass);
-          Serial.print("Light sensor bypass: "); 
-          Serial.println(smartLight.isLightSensorBypassed() ? "ENABLED (always night)" : "DISABLED (normal)");
-          if (smartLight.isLightSensorBypassed()) {
-            Serial.println("*** Testing mode: LED control based on IMU ONLY ***");
-          }
-        }
-        break;
-      case 'O': // Force LED ON
-        Serial.println("Forcing LED ON (manual override)");
-        smartLight.forceOn(255);
-        Serial.println("Use 'R' to return to auto mode");
-        break;
-      case 'F': // Force LED OFF
-        Serial.println("Forcing LED OFF (manual override)");
-        smartLight.forceOff();
-        Serial.println("Use 'R' to return to auto mode");
-        break;
-      case 'R': // Return to auto
-        Serial.println("Returning to automatic control mode");
-        smartLight.returnToAuto();
-        break;
-      case 'h': // Help
-        printInstructions();
-        break;
-      case 't': // Set LCD timeout
-        {
-          unsigned long timeoutSec = Serial.parseInt();
-          displayManager.setLCDTimeout(timeoutSec * 1000);
-          Serial.print("LCD timeout set to: ");
-          if (timeoutSec == 0) {
-            Serial.println("DISABLED (always on)");
-          } else {
-            Serial.print(timeoutSec);
-            Serial.println(" seconds");
-          }
-        }
-        break;
-      case 'W': // WiFi status
-        printWiFiStatus();
-        break;
-      case 'X': // Reset WiFi credentials
-        Serial.println("\n!!! RESETTING WiFi CREDENTIALS !!!");
-        Serial.println("Device will enter AP mode for reconfiguration");
-        wifiManager.resetCredentials();
-        Serial.println("WiFi reset complete");
-        break;
-      case 'Z': // Force reconnection
-        Serial.println("\nForcing WiFi reconnection...");
-        wifiManager.reconnect();
-        break;
-      case 'E': // Show event logs
-        printEventLogs();
-        break;
-      case 'C': // Clear event logs
-        Serial.println("\n!!! CLEARING ALL EVENT LOGS !!!");
-        eventLogger.clearAll();
-        Serial.println("All logs cleared");
-        break;
-      case 'U': // OTA status
-        printOTAStatus();
-        break;
-      case 'T': // OTA rollback
-        performOTARollback();
-        break;
-    }
-    // Clear remaining buffer
-    while(Serial.available()) Serial.read();
-  }
-}
-
-void printWiFiStatus() {
-  Serial.println("\n========== WIFI STATUS ==========");
-  Serial.print("State: ");
-  Serial.println(wifiManager.getStateString());
-  Serial.print("SSID: ");
-  Serial.println(wifiManager.getSSID());
-  Serial.print("IP Address: ");
-  Serial.println(wifiManager.getIPAddress());
-  Serial.print("Hostname: ");
-  Serial.println(wifiManager.getHostname());
-  
-  if (wifiManager.isConnected()) {
-    Serial.print("Signal Strength (RSSI): ");
-    Serial.print(wifiManager.getRSSI());
-    Serial.println(" dBm");
-  }
-  
-  if (!wifiManager.getLastError().isEmpty()) {
-    Serial.print("Last Error: ");
-    Serial.println(wifiManager.getLastError());
-  }
-  
-  Serial.print("Retry Interval: ");
-  Serial.print(wifiManager.getRetryInterval() / 1000);
-  Serial.println(" seconds");
-  
-  if (!wifiManager.isConnected() && !wifiManager.isAPMode()) {
-    unsigned long remaining = wifiManager.getReconnectTimeRemaining();
-    if (remaining > 0) {
-      Serial.print("Next reconnection attempt in: ");
-      Serial.print(remaining / 1000);
-      Serial.println(" seconds");
-    }
-  }
-  
-  Serial.println("=================================\n");
-}
-
-void printEventLogs() {
-  Serial.println("\n========== EVENT LOGS ==========");
-  Serial.print("Total events: "); Serial.println(eventLogger.getEventCount());
-  Serial.print("Events today: "); Serial.println(eventLogger.getTodayEventCount());
-  Serial.print("Events last 24h: "); Serial.println(eventLogger.getEventsLastHours(24));
-  Serial.println("\nRecent events (newest first):");
-  Serial.println("--------------------------------");
-  
-  uint16_t count = eventLogger.getEventCount();
-  uint16_t maxShow = count > 20 ? 20 : count; // Show max 20 events
-  
-  for (uint16_t i = 0; i < maxShow; i++) {
-    const EventLogger::LogEntry* entry = eventLogger.getEvent(i);
-    if (!entry) continue;
-    
-    // Format timestamp
-    time_t timestamp = entry->timestamp;
-    struct tm* timeinfo = localtime(&timestamp);
-    char timeStr[20];
-    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", timeinfo);
-    
-    Serial.print(timeStr);
-    Serial.print(" | ");
-    Serial.print(entry->ledOn ? "LED ON " : "LED OFF");
-    Serial.print(" | Lux:");
-    Serial.print(entry->lux, 1);
-    Serial.print(" | Motion:");
-    Serial.print(entry->motion ? "YES" : "NO ");
-    Serial.print(" | Mode:");
-    Serial.println(entry->mode);
-  }
-  
-  if (count > maxShow) {
-    Serial.print("... and "); Serial.print(count - maxShow); Serial.println(" more events");
-  }
-  
-  Serial.println("================================\n");
-}
-
-void printOTAStatus() {
-  Serial.println("\n========== OTA STATUS ==========");
-  
-  if (!otaManager) {
-    Serial.println("OTA Manager: NOT INITIALIZED");
-    Serial.println("OTA will be available when WiFi connects");
-  } else {
-    Serial.print("State: ");
-    Serial.println(otaManager->getStateString());
-    
-    Serial.print("Current Partition: ");
-    Serial.println(otaManager->getCurrentPartition());
-    
-    Serial.print("Available Space: ");
-    Serial.print(otaManager->getAvailableSpace());
-    Serial.println(" bytes");
-    
-    Serial.print("Max Firmware Size: ");
-    Serial.print(otaManager->getMaxFirmwareSize());
-    Serial.println(" bytes");
-    
-    Serial.print("Can Rollback: ");
-    Serial.println(otaManager->canRollback() ? "YES" : "NO");
-    
-    if (otaManager->getLastError() != OTAManager::OTAError::NONE) {
-      Serial.print("Last Error: ");
-      Serial.println(otaManager->getLastErrorString());
-    }
-    
-    if (wifiManager.isConnected()) {
-      Serial.print("\nOTA Web Interface: http://");
-      Serial.print(wifiManager.getIPAddress().toString());
-      Serial.println("/ota");
-    }
-  }
-  
-  Serial.println("================================\n");
-}
-
-void performOTARollback() {
-  Serial.println("\n========== OTA ROLLBACK ==========");
-  
-  if (!otaManager) {
-    Serial.println("ERROR: OTA Manager not initialized");
-    return;
-  }
-  
-  if (!otaManager->canRollback()) {
-    Serial.println("ERROR: No previous firmware available for rollback");
-    return;
-  }
-  
-  Serial.println("WARNING: This will reboot the device!");
-  Serial.println("Type 'Y' within 5 seconds to confirm rollback...");
-  
-  unsigned long startTime = millis();
-  while (millis() - startTime < 5000) {
-    if (Serial.available()) {
-      char confirm = Serial.read();
-      if (confirm == 'Y' || confirm == 'y') {
-        Serial.println("\n!!! PERFORMING ROLLBACK !!!");
-        Serial.println("Device will reboot...");
-        delay(1000);
-        
-        if (otaManager->rollback()) {
-          // Will not reach here as rollback() reboots
-        } else {
-          Serial.println("ERROR: Rollback failed");
-          Serial.println(otaManager->getLastErrorString());
-        }
-        return;
-      }
-    }
-    delay(100);
-  }
-  
-  Serial.println("Rollback cancelled (timeout)");
-  Serial.println("==================================\n");
-}
 

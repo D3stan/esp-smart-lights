@@ -189,10 +189,8 @@ public:
      * @param eventLogger Puntatore all'EventLogger
      */
     void setSystemComponents(void* controller, void* lightSensor, 
-                             void* motionDetector, void* ledController,
-                             void* eventLogger);
-    
-    /**
+                              void* motionDetector, void* ledController,
+                              void* eventLogger, uint8_t* rgbBrightness = nullptr);    /**
      * @brief Ottieni il riferimento al WebServer interno
      * @return Puntatore al WebServer (può essere nullptr se non inizializzato)
      */
@@ -229,6 +227,7 @@ private:
     void* _motionDetector;
     void* _ledController;
     void* _eventLogger;
+    uint8_t* _rgbBrightness;  // Pointer to RGB brightness variable
     
     // Helper methods
     bool loadCredentials();
@@ -252,6 +251,7 @@ private:
     void handleApiConfig();
     void handleApiConfigPost();
     void handleApiLedOverride();
+    void handleApiBrightness();
     void handleApiLogs();
     void handleApiLogsDelete();
     

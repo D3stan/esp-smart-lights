@@ -13,6 +13,9 @@ DisplayManager::DisplayManager(Adafruit_ST7735& tft)
     , _prevLux(-1.0f)
     , _prevMoving(false)
     , _prevLEDOn(false)
+    , _tempMessage("")
+    , _tempMessageEndTime(0)
+    , _showingTempMessage(false)
 {
 }
 
@@ -32,6 +35,11 @@ void DisplayManager::begin(unsigned long updateIntervalMs) {
     // Show welcome screen
     showWelcomeScreen();
     
+    // Draw button labels after welcome screen delay
+    delay(2000);
+    clear();
+    drawButtonLabels();  // Draw permanent button labels
+    
     Serial.println("Display Manager initialized");
     if (_lcdTimeoutMs > 0) {
         Serial.print("LCD auto-off timeout: ");
@@ -50,6 +58,18 @@ void DisplayManager::update(
 ) {
     // Check LCD timeout first
     checkLCDTimeout();
+    
+    // Check if temporary message has expired
+    if (_showingTempMessage && millis() >= _tempMessageEndTime) {
+        _showingTempMessage = false;
+        _tempMessage = "";
+        forceUpdate();  // Redraw normal display
+    }
+    
+    // If showing temporary message, skip normal updates
+    if (_showingTempMessage) {
+        return;
+    }
     
     // If display is off, skip drawing updates (but still check timeout)
     if (!_backlightOn) {
@@ -122,6 +142,9 @@ void DisplayManager::forceUpdate() {
     _prevLux = -1.0f;
     _prevMoving = false;
     _prevLEDOn = false;
+    
+    // Redraw button labels
+    drawButtonLabels();
 }
 
 void DisplayManager::showWelcomeScreen() {
@@ -162,6 +185,36 @@ void DisplayManager::showError(const String& errorMsg) {
     
     _tft.setCursor(5, 60);
     _tft.println(errorMsg);
+}
+
+void DisplayManager::showMessage(const String& message, unsigned long durationMs) {
+    // Store message and display time
+    _tempMessage = message;
+    _tempMessageEndTime = millis() + durationMs;
+    _showingTempMessage = true;
+    
+    // Wake display if it's off
+    if (!_backlightOn) {
+        setBacklight(true);
+    }
+    updateActivityTime();
+    
+    // Clear middle area and show message
+    _tft.fillRect(0, 40, 128, 48, COLOR_BACKGROUND);
+    _tft.setTextSize(1);
+    _tft.setTextColor(ST77XX_CYAN);
+    _tft.setTextWrap(true);
+    
+    // Calculate position for centered text
+    uint8_t y = 50;
+    uint8_t x = 5;
+    
+    _tft.setCursor(x, y);
+    _tft.println(message);
+    
+    // Force update after message expires
+    Serial.print("[DISPLAY] Showing message: ");
+    Serial.println(message);
 }
 
 void DisplayManager::clear() {
@@ -420,4 +473,29 @@ String DisplayManager::shortenSSID(const String& ssid, uint8_t maxLen) {
         return ssid;
     }
     return ssid.substring(0, maxLen - 2) + "..";
+}
+
+void DisplayManager::drawButtonLabels() {
+    // Draw permanent button labels at the top of the screen
+    // BTN_L (0) = left side (Blue)
+    // BTN_C (47) = center (Green)  
+    // BTN_R (48) = right side (Red)
+    
+    _tft.setTextSize(1);
+    _tft.setTextWrap(false);
+    
+    // Left button label (BTN_L/0) - "Light"
+    _tft.setTextColor(ST77XX_CYAN);
+    _tft.setCursor(2, 1);
+    _tft.print("Lgt");
+    
+    // Center button label (BTN_C/47) - "Test"
+    _tft.setTextColor(ST77XX_GREEN);
+    _tft.setCursor(52, 1);
+    _tft.print("Tst");
+    
+    // Right button label (BTN_R/48) - "Cal"
+    _tft.setTextColor(ST77XX_RED);
+    _tft.setCursor(103, 1);
+    _tft.print("Cal");
 }

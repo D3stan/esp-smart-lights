@@ -122,16 +122,24 @@ void SmartLightController::transitionTo(State newState) {
             break;
             
         case State::ON:
-            _ledController.turnOn(255);  // Full brightness
-            _countdownActive = false;
-            
-            // Log ON event if LED was off
-            if (!_lastLEDState && _eventLogger) {
-                const char* mode = _manualOverride ? (_autoModeEnabled ? "auto" : "manual") : "auto";
-                _eventLogger->logEvent(true, _lightSensor.getLastLux(), 
-                                      _motionDetector.isMoving(), mode);
+            {
+                // Load saved brightness from Preferences
+                Preferences prefs;
+                prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
+                uint8_t brightness = prefs.getUChar(CONFIG_LED_BRIGHTNESS_KEY, DEFAULT_LED_BRIGHTNESS);
+                prefs.end();
+                
+                _ledController.turnOn(brightness);
+                _countdownActive = false;
+                
+                // Log ON event if LED was off
+                if (!_lastLEDState && _eventLogger) {
+                    const char* mode = _manualOverride ? (_autoModeEnabled ? "auto" : "manual") : "auto";
+                    _eventLogger->logEvent(true, _lightSensor.getLastLux(), 
+                                          _motionDetector.isMoving(), mode);
+                }
+                _lastLEDState = true;
             }
-            _lastLEDState = true;
             break;
             
         case State::COUNTDOWN:

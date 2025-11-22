@@ -23,6 +23,7 @@ WiFiManager::WiFiManager()
     , _motionDetector(nullptr)
     , _ledController(nullptr)
     , _eventLogger(nullptr)
+    , _rgbBrightness(nullptr)
 {
 }
 
@@ -331,6 +332,7 @@ void WiFiManager::setupWebServer() {
     _webServer->on("/api/config", HTTP_GET, [this]() { handleApiConfig(); });
     _webServer->on("/api/config", HTTP_POST, [this]() { handleApiConfigPost(); });
     _webServer->on("/api/led/override", HTTP_POST, [this]() { handleApiLedOverride(); });
+    _webServer->on("/api/brightness", HTTP_POST, [this]() { handleApiBrightness(); });
     _webServer->on("/api/logs", HTTP_GET, [this]() { handleApiLogs(); });
     _webServer->on("/api/logs", HTTP_DELETE, [this]() { handleApiLogsDelete(); });
     
@@ -519,12 +521,13 @@ const char* WiFiManager::getStateString() const {
 
 void WiFiManager::setSystemComponents(void* controller, void* lightSensor, 
                                        void* motionDetector, void* ledController,
-                                       void* eventLogger) {
+                                       void* eventLogger, uint8_t* rgbBrightness) {
     _smartLightController = controller;
     _lightSensor = lightSensor;
     _motionDetector = motionDetector;
     _ledController = ledController;
     _eventLogger = eventLogger;
+    _rgbBrightness = rgbBrightness;
     Serial.println("System components linked to WiFiManager");
 }
 
@@ -709,8 +712,15 @@ void WiFiManager::handleApiLedOverride() {
         controller->returnToAuto();
         Serial.println("LED mode set to AUTO");
     } else if (mode == "on") {
-        controller->forceOn(255);
-        Serial.println("LED mode set to FORCED ON");
+        // Load saved brightness from Preferences
+        Preferences prefs;
+        prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
+        uint8_t brightness = prefs.getUChar(CONFIG_LED_BRIGHTNESS_KEY, DEFAULT_LED_BRIGHTNESS);
+        prefs.end();
+        
+        controller->forceOn(brightness);
+        Serial.print("LED mode set to FORCED ON with brightness: ");
+        Serial.println(brightness);
     } else if (mode == "off") {
         controller->forceOff();
         Serial.println("LED mode set to FORCED OFF");
@@ -722,6 +732,62 @@ void WiFiManager::handleApiLedOverride() {
     
     _webServer->send(200, "application/json", 
         "{\"success\":true,\"message\":\"Mode updated\"}");
+}
+
+void WiFiManager::handleApiBrightness() {
+    if (!_webServer->hasArg("plain")) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"No body provided\"}");
+        return;
+    }
+    
+    String body = _webServer->arg("plain");
+    int ledBrightness = -1;
+    int rgbBrightness = -1;
+    
+    // Parse LED strip brightness
+    int idx = body.indexOf("\"led_brightness\":");
+    if (idx >= 0) {
+        ledBrightness = body.substring(idx + 18).toInt();
+    }
+    
+    // Parse RGB LED brightness
+    idx = body.indexOf("\"rgb_brightness\":");
+    if (idx >= 0) {
+        rgbBrightness = body.substring(idx + 18).toInt();
+    }
+    
+    bool updated = false;
+    Preferences prefs;
+    prefs.begin(CONFIG_PREFS_NAMESPACE, false);  // Read-write
+    
+    // Save LED strip brightness (don't apply it, just save for later use)
+    if (ledBrightness >= 0 && ledBrightness <= 255) {
+        prefs.putUChar(CONFIG_LED_BRIGHTNESS_KEY, ledBrightness);
+        Serial.print("Saved LED strip brightness: ");
+        Serial.println(ledBrightness);
+        updated = true;
+    }
+    
+    // Save RGB LED brightness (apply immediately to global variable)
+    if (rgbBrightness >= 0 && rgbBrightness <= 255 && _rgbBrightness != nullptr) {
+        *_rgbBrightness = rgbBrightness;  // Update global variable
+        prefs.putUChar(CONFIG_RGB_BRIGHTNESS_KEY, rgbBrightness);
+        Serial.print("Saved RGB LED brightness: ");
+        Serial.println(rgbBrightness);
+        updated = true;
+    }
+    
+    prefs.end();
+    
+    if (!updated) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"Invalid brightness values\"}");
+        return;
+    }
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Brightness updated\"}");
 }
 
 void WiFiManager::handleApiLogs() {

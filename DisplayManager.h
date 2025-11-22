@@ -74,6 +74,13 @@ public:
     void showError(const String& errorMsg);
     
     /**
+     * @brief Mostra un messaggio temporaneo sul display
+     * @param message Messaggio da visualizzare
+     * @param durationMs Durata visualizzazione in millisecondi (default: 2000ms)
+     */
+    void showMessage(const String& message, unsigned long durationMs = 2000);
+    
+    /**
      * @brief Pulisce il display
      */
     void clear();
@@ -139,6 +146,11 @@ private:
     bool _prevMoving;
     bool _prevLEDOn;
     
+    // Temporary message display
+    String _tempMessage;
+    unsigned long _tempMessageEndTime;
+    bool _showingTempMessage;
+    
     // Display areas (Y coordinates)
     static constexpr uint8_t AREA_HEADER_Y = 0;
     static constexpr uint8_t AREA_HEADER_HEIGHT = 30;
@@ -163,6 +175,7 @@ private:
     void drawStatus(const LEDController& ledController);
     void drawWiFiIcon(uint8_t x, uint8_t y, uint16_t color);
     void drawCenteredText(const String& text, uint8_t y, uint8_t fontSize, uint16_t color);
+    void drawButtonLabels();  // Draw permanent button labels at top of screen
     uint16_t getWiFiStateColor(WiFiManager::ConnectionState state);
     String formatIP(const IPAddress& ip);
     String shortenSSID(const String& ssid, uint8_t maxLen = 16);

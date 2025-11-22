@@ -78,6 +78,12 @@
 #define DEFAULT_LED_SHUTOFF_DELAY_MS 30000     // Default delay before LED off after motion stops (30 seconds)
 #define CONFIG_LED_SHUTOFF_KEY "led_shutoff"   // Preferences key
 
+#define DEFAULT_LED_BRIGHTNESS 255             // Default LED strip brightness (0-255)
+#define CONFIG_LED_BRIGHTNESS_KEY "led_bright" // Preferences key for LED brightness
+
+#define DEFAULT_RGB_BRIGHTNESS 64              // Default RGB LED brightness (0-255)
+#define CONFIG_RGB_BRIGHTNESS_KEY "rgb_bright" // Preferences key for RGB brightness
+
 // Event Logging
 #define LOG_PREFS_NAMESPACE "event_logs"       // Namespace for event logs
 #define MAX_LOG_ENTRIES 100                    // Maximum number of log entries to store

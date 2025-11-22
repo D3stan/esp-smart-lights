@@ -741,6 +741,30 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
             </div>
             <div class="info-text" id="modeInfo">Modalità automatica: LED si accende quando è notte e c'è movimento</div>
         </div>
+        
+        <div class="section" style="margin-top: 20px;">
+            <div class="control-group">
+                <label class="control-label">Luminosità LED Strip</label>
+                <div class="input-group">
+                    <input type="range" id="ledBrightness" min="0" max="255" value="255" 
+                           style="flex: 1;" oninput="updateBrightnessDisplay('led', this.value)">
+                    <span class="unit" id="ledBrightnessValue">255</span>
+                </div>
+                <div class="info-text">Regola la luminosità della striscia LED (0-255)</div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">Luminosità RGB LED</label>
+                <div class="input-group">
+                    <input type="range" id="rgbBrightness" min="0" max="255" value="64" 
+                           style="flex: 1;" oninput="updateBrightnessDisplay('rgb', this.value)">
+                    <span class="unit" id="rgbBrightnessValue">64</span>
+                </div>
+                <div class="info-text">Regola la luminosità del LED RGB integrato (0-255)</div>
+            </div>
+            
+            <button class="btn btn-primary" onclick="saveBrightness()">💡 Applica Luminosità</button>
+        </div>
     </div>
     
     <div class="card">
@@ -939,6 +963,40 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
                 interactionTimeout = setTimeout(() => {
                     userInteracting = false;
                 }, 3000);
+            }
+        }
+        
+        // Update brightness display value
+        function updateBrightnessDisplay(type, value) {
+            if (type === 'led') {
+                document.getElementById('ledBrightnessValue').textContent = value;
+            } else if (type === 'rgb') {
+                document.getElementById('rgbBrightnessValue').textContent = value;
+            }
+        }
+        
+        // Save brightness settings
+        async function saveBrightness() {
+            const brightness = {
+                led_brightness: parseInt(document.getElementById('ledBrightness').value),
+                rgb_brightness: parseInt(document.getElementById('rgbBrightness').value)
+            };
+            
+            try {
+                const response = await fetch('/api/brightness', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(brightness)
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    alert('✓ Luminosità aggiornata con successo!');
+                } else {
+                    alert('Errore: ' + data.message);
+                }
+            } catch (error) {
+                alert('Errore di comunicazione: ' + error.message);
             }
         }
         
