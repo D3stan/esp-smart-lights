@@ -10,6 +10,8 @@
 #include "LightSensor.h"
 #include "LEDController.h"
 #include "SmartLightController.h"
+#include "WiFiManager.h"
+#include "DisplayManager.h"
 #include "config.h"
 
 // Create an instance of the display
@@ -42,6 +44,12 @@ LEDController ledController(LED_MOSFET_PIN);
 // Smart light controller instance (main logic)
 SmartLightController smartLight(motionDetector, lightSensor, ledController);
 
+// WiFi manager instance
+WiFiManager wifiManager;
+
+// Display manager instance
+DisplayManager displayManager(tft);
+
 void setup() {
 
 	Serial.begin(115200);
@@ -70,8 +78,11 @@ void setup() {
 	tft.initR(INITR_BLACKTAB);  // Specific initialization for the ST7735 screen
 	tft.fillScreen(ST77XX_WHITE); // Clear the screen with black background
 	
-	// Draw the bitmap at position (0, 0)
-	tft.drawBitmap(0, 0, myBitmap, 128, 128, ST77XX_BLACK); // Change color as needed
+	// Initialize Display Manager first (shows welcome screen)
+	displayManager.begin(1000); // Update every 1 second
+	
+	// Draw the bitmap at position (0, 0) - removed to use display manager instead
+	// tft.drawBitmap(0, 0, myBitmap, 128, 128, ST77XX_BLACK);
 
 	// Initialize motion detector
 	if (!motionDetector.begin(&qmi8658_cfg)) {
@@ -151,12 +162,26 @@ void setup() {
 	Serial.print("Shutoff Delay: "); Serial.print(smartLight.getShutoffDelay() / 1000); Serial.println(" seconds");
 	Serial.println("Logic: LED ON when (Night AND Movement)");
 	Serial.println("=========================================================\n");
+	
+	// Initialize WiFi Manager
+	Serial.println("\n========== INITIALIZING WIFI MANAGER ==========");
+	if (!wifiManager.begin()) {
+		Serial.println("ERROR: Failed to initialize WiFi Manager!");
+		displayManager.showError("WiFi Init Failed");
+		delay(3000);
+	} else {
+		Serial.println("WiFi Manager initialized successfully");
+	}
+	Serial.println("===============================================\n");
 
 }
 
 void loop() {
   // Check for serial commands
   handleSerialCommands();
+  
+  // Update WiFi Manager (handles reconnection, captive portal, etc.)
+  wifiManager.update();
   
   // Read light level every 500ms
   static unsigned long lastLightRead = 0;
@@ -170,6 +195,9 @@ void loop() {
   
   // Update smart light controller (main automatic logic)
   smartLight.update();
+  
+  // Update display with all current information
+  displayManager.update(wifiManager, lightSensor, motionDetector, ledController);
   
   // Button controls (check without blocking LED updates)
   static unsigned long lastButtonPress = 0;
@@ -295,6 +323,10 @@ void printInstructions() {
   Serial.println("  s - Show statistics");
   Serial.println("  c - Recalibrate");
   Serial.println("  h - Show this help");
+  Serial.println("\nWiFi Commands:");
+  Serial.println("  W - Show WiFi status");
+  Serial.println("  X - Reset WiFi credentials (factory reset)");
+  Serial.println("  Z - Force WiFi reconnection");
   Serial.println("========================================\n");
 }
 
@@ -457,8 +489,59 @@ void handleSerialCommands() {
       case 'h': // Help
         printInstructions();
         break;
+      case 'W': // WiFi status
+        printWiFiStatus();
+        break;
+      case 'X': // Reset WiFi credentials
+        Serial.println("\n!!! RESETTING WiFi CREDENTIALS !!!");
+        Serial.println("Device will enter AP mode for reconfiguration");
+        wifiManager.resetCredentials();
+        Serial.println("WiFi reset complete");
+        break;
+      case 'Z': // Force reconnection
+        Serial.println("\nForcing WiFi reconnection...");
+        wifiManager.reconnect();
+        break;
     }
     // Clear remaining buffer
     while(Serial.available()) Serial.read();
   }
+}
+
+void printWiFiStatus() {
+  Serial.println("\n========== WIFI STATUS ==========");
+  Serial.print("State: ");
+  Serial.println(wifiManager.getStateString());
+  Serial.print("SSID: ");
+  Serial.println(wifiManager.getSSID());
+  Serial.print("IP Address: ");
+  Serial.println(wifiManager.getIPAddress());
+  Serial.print("Hostname: ");
+  Serial.println(wifiManager.getHostname());
+  
+  if (wifiManager.isConnected()) {
+    Serial.print("Signal Strength (RSSI): ");
+    Serial.print(wifiManager.getRSSI());
+    Serial.println(" dBm");
+  }
+  
+  if (!wifiManager.getLastError().isEmpty()) {
+    Serial.print("Last Error: ");
+    Serial.println(wifiManager.getLastError());
+  }
+  
+  Serial.print("Retry Interval: ");
+  Serial.print(wifiManager.getRetryInterval() / 1000);
+  Serial.println(" seconds");
+  
+  if (!wifiManager.isConnected() && !wifiManager.isAPMode()) {
+    unsigned long remaining = wifiManager.getReconnectTimeRemaining();
+    if (remaining > 0) {
+      Serial.print("Next reconnection attempt in: ");
+      Serial.print(remaining / 1000);
+      Serial.println(" seconds");
+    }
+  }
+  
+  Serial.println("=================================\n");
 }

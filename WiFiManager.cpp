@@ -1,0 +1,497 @@
+#include "WiFiManager.h"
+#include "WiFiPages.h"
+#include "config.h"
+
+WiFiManager::WiFiManager()
+    : _webServer(nullptr)
+    , _dnsServer(nullptr)
+    , _state(ConnectionState::DISCONNECTED)
+    , _hostname(WIFI_HOSTNAME)
+    , _connectionStartTime(0)
+    , _lastReconnectAttempt(0)
+    , _retryIntervalMs(WIFI_RETRY_INTERVAL_MS)
+    , _resetButtonPressStart(0)
+    , _apModeActive(false)
+    , _resetButtonPressed(false)
+{
+}
+
+WiFiManager::~WiFiManager() {
+    if (_webServer) {
+        _webServer->stop();
+        delete _webServer;
+    }
+    if (_dnsServer) {
+        _dnsServer->stop();
+        delete _dnsServer;
+    }
+    _preferences.end();
+}
+
+bool WiFiManager::begin() {
+    Serial.println("\n========== WIFI MANAGER INITIALIZATION ==========");
+    
+    // Initialize preferences
+    if (!_preferences.begin(WIFI_PREFS_NAMESPACE, false)) {
+        Serial.println("ERROR: Failed to initialize Preferences!");
+        return false;
+    }
+    
+    // Load stored credentials and settings
+    if (loadCredentials()) {
+        Serial.println("Stored credentials found, attempting connection...");
+        startStationMode();
+    } else {
+        Serial.println("No stored credentials found, starting AP mode...");
+        startAPMode();
+    }
+    
+    Serial.println("=================================================\n");
+    return true;
+}
+
+void WiFiManager::update() {
+    // Check factory reset button
+    checkResetButton();
+    
+    // Handle connection state
+    switch (_state) {
+        case ConnectionState::CONNECTING:
+            checkConnection();
+            break;
+            
+        case ConnectionState::CONNECTED:
+            // Handle web server even in connected state
+            if (_webServer) {
+                _webServer->handleClient();
+            }
+            
+            // Check if still connected
+            if (WiFi.status() != WL_CONNECTED) {
+                Serial.println("Wi-Fi connection lost!");
+                _state = ConnectionState::DISCONNECTED;
+                _lastError = "Connection lost";
+            }
+            break;
+            
+        case ConnectionState::DISCONNECTED:
+        case ConnectionState::CONNECTION_FAILED:
+            handleReconnection();
+            break;
+            
+        case ConnectionState::AP_MODE:
+            // Handle web server and DNS
+            if (_webServer) {
+                _webServer->handleClient();
+            }
+            if (_dnsServer) {
+                _dnsServer->processNextRequest();
+            }
+            break;
+            
+        case ConnectionState::RECONNECTING:
+            checkConnection();
+            break;
+    }
+}
+
+bool WiFiManager::loadCredentials() {
+    _ssid = _preferences.getString(WIFI_PREFS_SSID_KEY, "");
+    _password = _preferences.getString(WIFI_PREFS_PASSWORD_KEY, "");
+    _retryIntervalMs = _preferences.getULong(WIFI_PREFS_RETRY_KEY, WIFI_RETRY_INTERVAL_MS);
+    
+    Serial.print("Loaded SSID: ");
+    Serial.println(_ssid.isEmpty() ? "(none)" : _ssid);
+    Serial.print("Retry Interval: ");
+    Serial.print(_retryIntervalMs / 1000);
+    Serial.println(" seconds");
+    
+    return !_ssid.isEmpty();
+}
+
+void WiFiManager::startStationMode() {
+    Serial.println("\n--- Starting Station Mode ---");
+    
+    // Stop AP mode if active
+    if (_apModeActive) {
+        stopAPMode();
+    }
+    
+    // Configure WiFi
+    WiFi.mode(WIFI_STA);
+    WiFi.setHostname(_hostname.c_str());
+    
+    // Start connection
+    Serial.print("Connecting to: ");
+    Serial.println(_ssid);
+    WiFi.begin(_ssid.c_str(), _password.c_str());
+    
+    _state = ConnectionState::CONNECTING;
+    _connectionStartTime = millis();
+    _lastError = "";
+}
+
+void WiFiManager::startAPMode() {
+    Serial.println("\n--- Starting AP Mode ---");
+    
+    _apModeActive = true;
+    _state = ConnectionState::AP_MODE;
+    
+    // Disconnect from station if connected
+    WiFi.disconnect();
+    
+    // Configure AP
+    WiFi.mode(WIFI_AP);
+    
+    bool apStarted;
+    if (strlen(WIFI_AP_PASSWORD) >= 8) {
+        apStarted = WiFi.softAP(
+            WIFI_AP_SSID,
+            WIFI_AP_PASSWORD,
+            WIFI_AP_CHANNEL,
+            WIFI_AP_HIDDEN,
+            WIFI_AP_MAX_CONNECTIONS
+        );
+    } else {
+        // Open network (no password)
+        apStarted = WiFi.softAP(
+            WIFI_AP_SSID,
+            NULL,
+            WIFI_AP_CHANNEL,
+            WIFI_AP_HIDDEN,
+            WIFI_AP_MAX_CONNECTIONS
+        );
+    }
+    
+    if (!apStarted) {
+        Serial.println("ERROR: Failed to start AP!");
+        _lastError = "Failed to start AP";
+        return;
+    }
+    
+    IPAddress apIP = WiFi.softAPIP();
+    Serial.print("AP Started: ");
+    Serial.println(WIFI_AP_SSID);
+    Serial.print("AP IP: ");
+    Serial.println(apIP);
+    
+    // Setup DNS server for captive portal
+    if (WIFI_CAPTIVE_PORTAL_ENABLED) {
+        _dnsServer = new DNSServer();
+        _dnsServer->start(53, "*", apIP); // Redirect all DNS requests to AP IP
+        Serial.println("DNS Server started (Captive Portal enabled)");
+    }
+    
+    // Setup web server
+    setupWebServer();
+    
+    Serial.println("AP Mode ready - Connect to configure Wi-Fi");
+    Serial.println("-------------------------------\n");
+}
+
+void WiFiManager::stopAPMode() {
+    Serial.println("Stopping AP mode...");
+    
+    // Keep web server running, only stop DNS and AP
+    // Web server will continue to serve in Station mode
+    
+    if (_dnsServer) {
+        _dnsServer->stop();
+        delete _dnsServer;
+        _dnsServer = nullptr;
+    }
+    
+    WiFi.softAPdisconnect(true);
+    _apModeActive = false;
+}
+
+void WiFiManager::checkConnection() {
+    wl_status_t status = WiFi.status();
+    
+    // Check timeout
+    if (millis() - _connectionStartTime > WIFI_CONNECTION_TIMEOUT_MS) {
+        Serial.println("Connection timeout!");
+        _state = ConnectionState::CONNECTION_FAILED;
+        _lastError = "Connection timeout";
+        
+        // If no credentials or connection failed, start AP mode
+        if (!hasStoredCredentials() || _state == ConnectionState::CONNECTING) {
+            startAPMode();
+        }
+        return;
+    }
+    
+    // Check connection status
+    switch (status) {
+        case WL_CONNECTED:
+            _state = ConnectionState::CONNECTED;
+            Serial.println("\n✓ Wi-Fi Connected!");
+            Serial.print("IP Address: ");
+            Serial.println(WiFi.localIP());
+            Serial.print("Hostname: ");
+            Serial.println(_hostname);
+            Serial.print("RSSI: ");
+            Serial.print(WiFi.RSSI());
+            Serial.println(" dBm\n");
+            _lastError = "";
+            
+            // Start web server if not already running
+            if (!_webServer) {
+                setupWebServer();
+                Serial.println("Web server started for Station mode");
+            }
+            break;
+            
+        case WL_CONNECT_FAILED:
+            _state = ConnectionState::CONNECTION_FAILED;
+            _lastError = "Wrong password or SSID not found";
+            Serial.println("Connection failed: Wrong password or SSID not found");
+            break;
+            
+        case WL_NO_SSID_AVAIL:
+            _state = ConnectionState::CONNECTION_FAILED;
+            _lastError = "SSID not available";
+            Serial.println("Connection failed: SSID not available");
+            break;
+            
+        case WL_DISCONNECTED:
+        case WL_IDLE_STATUS:
+            // Still connecting...
+            break;
+            
+        default:
+            Serial.print("Connection status: ");
+            Serial.println(status);
+            break;
+    }
+}
+
+void WiFiManager::handleReconnection() {
+    // Only try to reconnect if we have credentials and enough time has passed
+    if (!hasStoredCredentials()) {
+        if (_state != ConnectionState::AP_MODE) {
+            startAPMode();
+        }
+        return;
+    }
+    
+    unsigned long now = millis();
+    if (now - _lastReconnectAttempt >= _retryIntervalMs) {
+        Serial.println("Attempting reconnection...");
+        _lastReconnectAttempt = now;
+        _state = ConnectionState::RECONNECTING;
+        startStationMode();
+    }
+}
+
+void WiFiManager::checkResetButton() {
+    bool buttonPressed = (digitalRead(WIFI_RESET_BUTTON_PIN) == LOW);
+    
+    if (buttonPressed && !_resetButtonPressed) {
+        // Button just pressed
+        _resetButtonPressed = true;
+        _resetButtonPressStart = millis();
+    } else if (!buttonPressed && _resetButtonPressed) {
+        // Button just released
+        _resetButtonPressed = false;
+    } else if (buttonPressed && _resetButtonPressed) {
+        // Button held down
+        unsigned long holdTime = millis() - _resetButtonPressStart;
+        if (holdTime >= WIFI_RESET_HOLD_TIME_MS) {
+            Serial.println("\n*** FACTORY RESET TRIGGERED ***");
+            resetCredentials();
+            _resetButtonPressed = false;
+        }
+    }
+}
+
+void WiFiManager::setupWebServer() {
+    _webServer = new WebServer(WIFI_WEB_SERVER_PORT);
+    
+    // Register handlers
+    _webServer->on("/", [this]() { handleRoot(); });
+    _webServer->on("/scan", [this]() { handleScan(); });
+    _webServer->on("/save", [this]() { handleSave(); });
+    _webServer->on("/status", [this]() { handleStatus(); });
+    _webServer->onNotFound([this]() { handleNotFound(); });
+    
+    _webServer->begin();
+    Serial.println("Web server started on port 80");
+}
+
+void WiFiManager::handleRoot() {
+    if (_state == ConnectionState::AP_MODE) {
+        // In AP mode, show configuration page
+        String html = FPSTR(WIFI_CONFIG_PAGE);
+        html.replace("%DEVICE_AP_SSID%", WIFI_AP_SSID);
+        _webServer->send(200, "text/html", html);
+    } else {
+        // In Station mode, show status/dashboard page
+        String html = FPSTR(WIFI_STATUS_PAGE);
+        html.replace("%WIFI_SSID%", _ssid);
+        html.replace("%WIFI_IP%", WiFi.localIP().toString());
+        html.replace("%WIFI_HOSTNAME%", _hostname);
+        html.replace("%WIFI_RSSI%", String(WiFi.RSSI()));
+        html.replace("%WIFI_MAC%", WiFi.macAddress());
+        _webServer->send(200, "text/html", html);
+    }
+}
+
+void WiFiManager::handleScan() {
+    Serial.println("Scanning networks...");
+    int n = WiFi.scanNetworks();
+    
+    String json = "{\"networks\":[";
+    for (int i = 0; i < n; i++) {
+        if (i > 0) json += ",";
+        json += "{";
+        json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
+        json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+        json += "\"encrypted\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false");
+        json += "}";
+    }
+    json += "]}";
+    
+    _webServer->send(200, "application/json", json);
+    WiFi.scanDelete();
+}
+
+void WiFiManager::handleSave() {
+    if (!_webServer->hasArg("ssid") || !_webServer->hasArg("password")) {
+        _webServer->send(400, "application/json", "{\"success\":false,\"message\":\"Missing parameters\"}");
+        return;
+    }
+    
+    String ssid = _webServer->arg("ssid");
+    String password = _webServer->arg("password");
+    unsigned long retryInterval = _webServer->arg("retry").toInt() * 1000; // Convert to ms
+    
+    if (ssid.isEmpty()) {
+        _webServer->send(400, "application/json", "{\"success\":false,\"message\":\"SSID cannot be empty\"}");
+        return;
+    }
+    
+    // Save credentials
+    if (!saveCredentials(ssid, password)) {
+        _webServer->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to save credentials\"}");
+        return;
+    }
+    
+    // Save retry interval
+    if (retryInterval >= 30000 && retryInterval <= 3600000) {
+        _retryIntervalMs = retryInterval;
+        _preferences.putULong(WIFI_PREFS_RETRY_KEY, _retryIntervalMs);
+    }
+    
+    String response = "{\"success\":true,\"message\":\"Credentials saved\",\"hostname\":\"" + _hostname + "\"}";
+    _webServer->send(200, "application/json", response);
+    
+    // Restart connection after response is sent
+    delay(1000);
+    startStationMode();
+}
+
+void WiFiManager::handleStatus() {
+    String json = "{";
+    json += "\"state\":\"" + String(getStateString()) + "\",";
+    json += "\"ssid\":\"" + _ssid + "\",";
+    json += "\"connected\":" + String(isConnected() ? "true" : "false") + ",";
+    json += "\"ip\":\"" + getIPAddress().toString() + "\",";
+    json += "\"rssi\":" + String(getRSSI()) + ",";
+    json += "\"error\":\"" + _lastError + "\"";
+    json += "}";
+    _webServer->send(200, "application/json", json);
+}
+
+void WiFiManager::handleNotFound() {
+    // Captive portal redirect
+    if (WIFI_CAPTIVE_PORTAL_ENABLED && _apModeActive) {
+        handleRoot();
+    } else {
+        _webServer->send(404, "text/plain", "Not Found");
+    }
+}
+
+bool WiFiManager::saveCredentials(const String& ssid, const String& password) {
+    _ssid = ssid;
+    _password = password;
+    
+    _preferences.putString(WIFI_PREFS_SSID_KEY, _ssid);
+    _preferences.putString(WIFI_PREFS_PASSWORD_KEY, _password);
+    
+    Serial.println("Credentials saved:");
+    Serial.print("  SSID: ");
+    Serial.println(_ssid);
+    Serial.println("  Password: ********");
+    
+    return true;
+}
+
+void WiFiManager::setRetryInterval(unsigned long intervalMs) {
+    _retryIntervalMs = intervalMs;
+    _preferences.putULong(WIFI_PREFS_RETRY_KEY, _retryIntervalMs);
+    Serial.print("Retry interval set to: ");
+    Serial.print(_retryIntervalMs / 1000);
+    Serial.println(" seconds");
+}
+
+void WiFiManager::resetCredentials() {
+    Serial.println("Resetting Wi-Fi credentials...");
+    _preferences.clear();
+    _ssid = "";
+    _password = "";
+    _lastError = "";
+    
+    // Restart in AP mode
+    startAPMode();
+    Serial.println("Credentials reset. Device in AP mode.");
+}
+
+void WiFiManager::reconnect() {
+    Serial.println("Manual reconnection triggered");
+    _lastReconnectAttempt = 0; // Force immediate reconnection
+    _state = ConnectionState::DISCONNECTED;
+}
+
+bool WiFiManager::hasStoredCredentials() const {
+    return !_ssid.isEmpty() && !_password.isEmpty();
+}
+
+IPAddress WiFiManager::getIPAddress() const {
+    if (_apModeActive) {
+        return WiFi.softAPIP();
+    }
+    return WiFi.localIP();
+}
+
+int32_t WiFiManager::getRSSI() const {
+    if (isConnected()) {
+        return WiFi.RSSI();
+    }
+    return 0;
+}
+
+unsigned long WiFiManager::getReconnectTimeRemaining() const {
+    if (_state == ConnectionState::CONNECTED || _state == ConnectionState::AP_MODE) {
+        return 0;
+    }
+    
+    unsigned long elapsed = millis() - _lastReconnectAttempt;
+    if (elapsed >= _retryIntervalMs) {
+        return 0;
+    }
+    
+    return _retryIntervalMs - elapsed;
+}
+
+const char* WiFiManager::getStateString() const {
+    switch (_state) {
+        case ConnectionState::DISCONNECTED: return "DISCONNECTED";
+        case ConnectionState::CONNECTING: return "CONNECTING";
+        case ConnectionState::CONNECTED: return "CONNECTED";
+        case ConnectionState::AP_MODE: return "AP_MODE";
+        case ConnectionState::CONNECTION_FAILED: return "FAILED";
+        case ConnectionState::RECONNECTING: return "RECONNECTING";
+        default: return "UNKNOWN";
+    }
+}

@@ -11,7 +11,7 @@
 
 // LED Strip Control (via MOSFET IRLZ44N)
 #define LED_MOSFET_PIN 14  // PWM output to MOSFET gate
-#define LED_SHUTOFF_DELAY_MS 300  // Default shutoff delay (30 seconds)
+#define LED_SHUTOFF_DELAY_MS 10000  // Default shutoff delay (10 seconds)
 
 // RGB Led
 #define BTN_R 48
@@ -26,3 +26,32 @@
 
 #define RGB_PW 7
 #define RGB_BRIGHTNESS 64
+
+// ========== Wi-Fi Configuration ==========
+// These are DEFAULT values, can be overridden via web portal and stored in Preferences
+
+// Wi-Fi Station Mode (connection to existing network)
+#define WIFI_HOSTNAME "Centralina-Luci"  // mDNS hostname for the device
+#define WIFI_CONNECTION_TIMEOUT_MS 15000  // Time to wait for connection before switching to AP mode
+#define WIFI_RETRY_INTERVAL_MS 300000     // Time between reconnection attempts (5 minutes)
+
+// Wi-Fi AP Mode (fallback mode for configuration)
+#define WIFI_AP_SSID "Centralina-Luci-Setup"  // SSID when in AP mode
+#define WIFI_AP_PASSWORD "setup123"           // AP password (min 8 chars, use empty string for open network)
+#define WIFI_AP_CHANNEL 1                      // Wi-Fi channel for AP
+#define WIFI_AP_MAX_CONNECTIONS 2              // Max simultaneous connections in AP mode
+#define WIFI_AP_HIDDEN false                   // Hide SSID broadcast
+
+// Captive Portal Configuration
+#define WIFI_CAPTIVE_PORTAL_ENABLED true       // Enable captive portal redirect in AP mode
+#define WIFI_WEB_SERVER_PORT 80                // HTTP server port
+
+// Preferences Storage
+#define WIFI_PREFS_NAMESPACE "wifi_config"     // Namespace for Preferences storage
+#define WIFI_PREFS_SSID_KEY "ssid"             // Key for stored SSID
+#define WIFI_PREFS_PASSWORD_KEY "password"     // Key for stored password
+#define WIFI_PREFS_RETRY_KEY "retry_interval"  // Key for retry interval (ms)
+
+// Factory Reset (hold button to reset Wi-Fi credentials)
+#define WIFI_RESET_BUTTON_PIN BTN_C            // Button to hold for factory reset (center button)
+#define WIFI_RESET_HOLD_TIME_MS 5000           // Hold time required for reset (5 seconds)
