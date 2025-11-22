@@ -152,7 +152,7 @@ const char WIFI_CONFIG_PAGE[] PROGMEM = R"rawliteral(
         <form id="wifiForm" onsubmit="return submitForm(event)">
             <div class="form-group">
                 <label for="ssid">Nome Rete (SSID) *</label>
-                <select id="ssid" name="ssid" required onchange="updateSSIDField()">
+                <select id="ssid" name="ssid" onchange="updateSSIDField()">
                     <option value="">-- Scansiona reti disponibili --</option>
                 </select>
                 <input type="text" id="ssid_custom" name="ssid_custom" placeholder="Oppure inserisci SSID manualmente" style="margin-top: 10px;">
