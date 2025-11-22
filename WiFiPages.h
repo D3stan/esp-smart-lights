@@ -401,6 +401,43 @@ const char WIFI_STATUS_PAGE[] PROGMEM = R"rawliteral(
         .info-banner strong {
             color: #664d03;
         }
+        .nav-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-around;
+            padding: 12px 0;
+        }
+        .nav-item {
+            flex: 1;
+            text-align: center;
+            padding: 8px;
+            color: #666;
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 600;
+            transition: color 0.2s;
+        }
+        .nav-item.active {
+            color: #667eea;
+        }
+        .nav-icon {
+            font-size: 20px;
+            display: block;
+            margin-bottom: 4px;
+        }
+        @media (min-width: 768px) {
+            .nav-footer {
+                position: relative;
+                max-width: 600px;
+                margin: 20px auto 0;
+                border-radius: 12px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -434,13 +471,27 @@ const char WIFI_STATUS_PAGE[] PROGMEM = R"rawliteral(
                 <span class="value">%WIFI_MAC%</span>
             </div>
         </div>
-        <a href="/dashboard" style="text-decoration: none;">
-            <div class="info-banner">
-                <p>✨ <strong>Sistema Operativo</strong></p>
-                <p>Il dispositivo è connesso alla rete e pronto per l'uso</p>
-            </div>
-        </a>
+        <div class="info-banner">
+            <p>✨ <strong>Sistema Operativo</strong></p>
+            <p>Il dispositivo è connesso alla rete e pronto per l'uso</p>
+            <p style="margin-top: 15px;"><a href="/dashboard" style="color: #664d03; font-weight: 600; text-decoration: none;">📊 Apri Dashboard →</a></p>
+        </div>
     </div>
+    
+    <nav class="nav-footer">
+        <a href="/dashboard" class="nav-item">
+            <span class="nav-icon">📊</span>
+            Dashboard
+        </a>
+        <a href="/logs" class="nav-item">
+            <span class="nav-icon">📋</span>
+            Logs
+        </a>
+        <a href="/" class="nav-item active">
+            <span class="nav-icon">ℹ️</span>
+            Info
+        </a>
+    </nav>
 </body>
 </html>
 )rawliteral";
@@ -754,6 +805,8 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
     <script>
         let currentMode = 'auto';
         let pollInterval = null;
+        let userInteracting = false;
+        let interactionTimeout = null;
         
         // Poll status from server
         async function pollStatus() {
@@ -819,6 +872,11 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
         
         // Update mode button states
         function updateModeButtons(mode) {
+            // Don't update if user is currently interacting
+            if (userInteracting) {
+                return;
+            }
+            
             currentMode = mode;
             document.getElementById('btnAuto').classList.toggle('active', mode === 'auto');
             document.getElementById('btnOn').classList.toggle('active', mode === 'on');
@@ -834,6 +892,27 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
         
         // Set LED mode
         async function setLEDMode(mode) {
+            // Mark as user interaction
+            userInteracting = true;
+            
+            // Clear any existing timeout
+            if (interactionTimeout) {
+                clearTimeout(interactionTimeout);
+            }
+            
+            // Update UI immediately
+            currentMode = mode;
+            document.getElementById('btnAuto').classList.toggle('active', mode === 'auto');
+            document.getElementById('btnOn').classList.toggle('active', mode === 'on');
+            document.getElementById('btnOff').classList.toggle('active', mode === 'off');
+            
+            const infoTexts = {
+                auto: 'Modalità automatica: LED si accende quando è notte e c\'è movimento',
+                on: 'LED forzato ACCESO (modalità manuale)',
+                off: 'LED forzato SPENTO (modalità manuale)'
+            };
+            document.getElementById('modeInfo').textContent = infoTexts[mode] || '';
+            
             try {
                 const response = await fetch('/api/led/override', {
                     method: 'POST',
@@ -842,13 +921,16 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
                 });
                 
                 const data = await response.json();
-                if (data.success) {
-                    updateModeButtons(mode);
-                } else {
+                if (!data.success) {
                     alert('Errore: ' + data.message);
                 }
             } catch (error) {
                 alert('Errore di comunicazione: ' + error.message);
+            } finally {
+                // Allow updates again after 3 seconds
+                interactionTimeout = setTimeout(() => {
+                    userInteracting = false;
+                }, 3000);
             }
         }
         
