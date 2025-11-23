@@ -175,7 +175,7 @@ void setup() {
 	// Initialize Smart Light Controller
 	Serial.println("\n========== INITIALIZING SMART LIGHT CONTROLLER ==========");
 	smartLight.begin(LED_SHUTOFF_DELAY_MS); // Load config and set shutoff delay
-    smartLight.setLightSensorBypass(true);
+    // Light sensor bypass is OFF by default (normal operation)
 	
 	// Load saved brightness values from Preferences
 	Preferences prefs;

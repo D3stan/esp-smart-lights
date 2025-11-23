@@ -31,14 +31,18 @@ void SmartLightController::begin(unsigned long shutoffDelayMs) {
         _shutoffDelayMs = shutoffDelayMs;
     }
     
+    // Reset all state variables to defaults
     _currentState = State::OFF;
     _countdownActive = false;
     _manualOverride = false;
     _autoModeEnabled = true;
     _lastLEDState = false;
+    _lightSensorBypass = false;  // Ensure bypass is OFF at startup
     
-    // Ensure LED starts off
+    // Force LED off at startup
     _ledController.turnOff();
+    
+    Serial.println("Smart Light Controller started in AUTO mode with LED OFF");
 }
 
 void SmartLightController::update() {
