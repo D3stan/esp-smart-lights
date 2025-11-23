@@ -768,6 +768,74 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
     </div>
     
     <div class="card">
+        <div class="card-header">🎛️ Bypass Sensori (Test Mode)</div>
+        
+        <div class="section">
+            <div class="control-group">
+                <label class="control-label">Bypass Sensore Luce</label>
+                <div class="btn-group">
+                    <button class="btn" id="btnLightBypassOff" onclick="setLightBypass(false)">NORMALE</button>
+                    <button class="btn" id="btnLightBypassOn" onclick="setLightBypass(true)">BYPASS (NOTTE)</button>
+                </div>
+                <div class="info-text">Bypass: sensore luce sempre rileva "notte"</div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">Bypass Sensore Movimento</label>
+                <div class="btn-group">
+                    <button class="btn" id="btnMovementBypassOff" onclick="setMovementBypass(false)">NORMALE</button>
+                    <button class="btn" id="btnMovementBypassOn" onclick="setMovementBypass(true)">BYPASS (MOVIMENTO)</button>
+                </div>
+                <div class="info-text">Bypass: sensore movimento sempre rileva "in movimento"</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">🕐 Finestra Oraria</div>
+        
+        <div class="section">
+            <div class="control-group">
+                <label class="control-label">Abilita Restrizione Oraria</label>
+                <div class="btn-group">
+                    <button class="btn" id="btnTimeWindowDisabled" onclick="setTimeWindowEnabled(false)">DISABILITATO</button>
+                    <button class="btn" id="btnTimeWindowEnabled" onclick="setTimeWindowEnabled(true)">ABILITATO</button>
+                </div>
+                <div class="info-text">Quando abilitato, LED si accende solo nell'orario configurato</div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">Logica Finestra</label>
+                <div class="btn-group">
+                    <button class="btn" id="btnTimeWindowNormal" onclick="setTimeWindowInverted(false)">NORMALE</button>
+                    <button class="btn" id="btnTimeWindowInverted" onclick="setTimeWindowInverted(true)">INVERTITO</button>
+                </div>
+                <div class="info-text">Normale: dentro orario | Invertito: fuori orario</div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">Ora Inizio (24h)</label>
+                <div class="input-group">
+                    <input type="number" id="timeWindowStart" min="0" max="23" value="7">
+                    <span class="unit">:00</span>
+                </div>
+                <div class="info-text">LED può accendersi a partire da quest'ora</div>
+            </div>
+            
+            <div class="control-group">
+                <label class="control-label">Ora Fine (24h)</label>
+                <div class="input-group">
+                    <input type="number" id="timeWindowEnd" min="0" max="23" value="17">
+                    <span class="unit">:00</span>
+                </div>
+                <div class="info-text">LED non si accende dopo quest'ora</div>
+            </div>
+            
+            <button class="btn btn-primary" onclick="saveTimeWindow()">🕐 Salva Finestra Oraria</button>
+        </div>
+    </div>
+    
+    <div class="card">
         <div class="card-header">⚙️ Configurazione</div>
         
         <div class="section">
@@ -1046,6 +1114,199 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
             
             // Load brightness values
             await loadBrightnessValues();
+            
+            // Load bypass states
+            await loadBypassStates();
+            
+            // Load time window configuration
+            await loadTimeWindow();
+        }
+        
+        // Load bypass states
+        async function loadBypassStates() {
+            try {
+                const response = await fetch('/api/bypass');
+                const data = await response.json();
+                
+                updateBypassButtons('light', data.light_bypass);
+                updateBypassButtons('movement', data.movement_bypass);
+            } catch (error) {
+                console.error('Error loading bypass states:', error);
+            }
+        }
+        
+        // Update bypass button states
+        function updateBypassButtons(type, bypassed) {
+            if (type === 'light') {
+                document.getElementById('btnLightBypassOff').classList.toggle('active', !bypassed);
+                document.getElementById('btnLightBypassOn').classList.toggle('active', bypassed);
+            } else if (type === 'movement') {
+                document.getElementById('btnMovementBypassOff').classList.toggle('active', !bypassed);
+                document.getElementById('btnMovementBypassOn').classList.toggle('active', bypassed);
+            }
+        }
+        
+        // Set light sensor bypass
+        async function setLightBypass(bypass) {
+            try {
+                const response = await fetch('/api/bypass/light', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bypass: bypass })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    updateBypassButtons('light', bypass);
+                } else {
+                    alert('Errore: ' + data.message);
+                }
+            } catch (error) {
+                alert('Errore di comunicazione: ' + error.message);
+            }
+        }
+        
+        // Set movement sensor bypass
+        async function setMovementBypass(bypass) {
+            try {
+                const response = await fetch('/api/bypass/movement', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bypass: bypass })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    updateBypassButtons('movement', bypass);
+                } else {
+                    alert('Errore: ' + data.message);
+                }
+            } catch (error) {
+                alert('Errore di comunicazione: ' + error.message);
+            }
+        }
+        
+        // Load time window configuration
+        async function loadTimeWindow() {
+            try {
+                const response = await fetch('/api/timewindow');
+                const data = await response.json();
+                
+                document.getElementById('timeWindowStart').value = data.start_hour;
+                document.getElementById('timeWindowEnd').value = data.end_hour;
+                
+                updateTimeWindowButtons(data.enabled);
+                updateTimeWindowInversionButtons(data.inverted);
+            } catch (error) {
+                console.error('Error loading time window:', error);
+            }
+        }
+        
+        // Update time window button states
+        function updateTimeWindowButtons(enabled) {
+            document.getElementById('btnTimeWindowDisabled').classList.toggle('active', !enabled);
+            document.getElementById('btnTimeWindowEnabled').classList.toggle('active', enabled);
+        }
+        
+        // Update time window inversion button states
+        function updateTimeWindowInversionButtons(inverted) {
+            document.getElementById('btnTimeWindowNormal').classList.toggle('active', !inverted);
+            document.getElementById('btnTimeWindowInverted').classList.toggle('active', inverted);
+        }
+        
+        // Set time window enabled/disabled
+        async function setTimeWindowEnabled(enabled) {
+            try {
+                const response = await fetch('/api/timewindow/enable', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    updateTimeWindowButtons(enabled);
+                } else {
+                    alert('Errore: ' + data.message);
+                }
+            } catch (error) {
+                alert('Errore di comunicazione: ' + error.message);
+            }
+        }
+        
+        // Set time window inverted
+        async function setTimeWindowInverted(inverted) {
+            try {
+                const response = await fetch('/api/timewindow/invert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ inverted: inverted })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    updateTimeWindowInversionButtons(inverted);
+                } else {
+                    alert('Errore: ' + data.message);
+                }
+            } catch (error) {
+                alert('Errore di comunicazione: ' + error.message);
+            }
+        }
+        
+        // Save time window configuration
+        async function saveTimeWindow() {
+            const startHour = parseInt(document.getElementById('timeWindowStart').value);
+            const endHour = parseInt(document.getElementById('timeWindowEnd').value);
+            
+            if (startHour < 0 || startHour > 23 || endHour < 0 || endHour > 23) {
+                alert('Errore: Le ore devono essere tra 0 e 23');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/timewindow', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        start_hour: startHour,
+                        end_hour: endHour
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    alert('✓ Finestra oraria salvata con successo!');
+                } else {
+                    alert('Errore: ' + data.message);
+                }
+            } catch (error) {
+                alert('Errore di comunicazione: ' + error.message);
+            }
+        }
+        
+        // Load configuration
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                
+                document.getElementById('luxThreshold').value = data.lux_threshold;
+                document.getElementById('accelThreshold').value = data.accel_threshold;
+                document.getElementById('gyroThreshold').value = data.gyro_threshold;
+                document.getElementById('shutoffDelay').value = data.shutoff_delay / 1000; // Convert to seconds
+            } catch (error) {
+                console.error('Error loading config:', error);
+            }
+            
+            // Load brightness values
+            await loadBrightnessValues();
+            
+            // Load bypass states
+            await loadBypassStates();
+            
+            // Load time window configuration
+            await loadTimeWindow();
         }
         
         // Save configuration

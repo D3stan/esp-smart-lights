@@ -233,8 +233,15 @@ void setup() {
 	Serial.println("==============================================\n");
 	
 	// Configure NTP for timestamps (will sync when WiFi connects)
-	configTime(3600, 3600, "pool.ntp.org", "time.nist.gov");
+	configTime(NTP_GMT_OFFSET_SEC, NTP_DAYLIGHT_OFFSET_SEC, NTP_SERVER_PRIMARY, NTP_SERVER_SECONDARY);
 	Serial.println("NTP time sync configured (will sync when WiFi connected)");
+	Serial.print("NTP Servers: ");
+	Serial.print(NTP_SERVER_PRIMARY);
+	Serial.print(", ");
+	Serial.println(NTP_SERVER_SECONDARY);
+	Serial.print("GMT Offset: ");
+	Serial.print(NTP_GMT_OFFSET_SEC / 3600);
+	Serial.println(" hours");
 
 }
 

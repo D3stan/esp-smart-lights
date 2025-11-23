@@ -97,3 +97,24 @@
 #define CONFIG_LCD_TIMEOUT_KEY "lcd_timeout"   // Preferences key for LCD timeout
 #define LCD_WAKE_ON_MOTION true                // Wake display when motion is detected
 #define LCD_WAKE_ON_STATE_CHANGE true          // Wake display when LED/WiFi state changes
+
+// ========== Time Window Configuration ==========
+// LED accensione basata su orario (e.g. accendi solo tra le 7:00 e le 17:00)
+
+#define DEFAULT_TIME_WINDOW_ENABLED false      // Default: time window disabled
+#define DEFAULT_TIME_WINDOW_START 7            // Default start hour (7:00)
+#define DEFAULT_TIME_WINDOW_END 17             // Default end hour (17:00)
+
+#define CONFIG_TIME_WINDOW_ENABLED_KEY "tw_enabled" // Preferences key
+#define CONFIG_TIME_WINDOW_INVERTED_KEY "tw_invert" // Preferences key for inversion
+#define CONFIG_TIME_WINDOW_START_KEY "tw_start"     // Preferences key
+#define CONFIG_TIME_WINDOW_END_KEY "tw_end"         // Preferences key
+
+// NTP Configuration
+#define NTP_SERVER_PRIMARY "pool.ntp.org"      // Primary NTP server
+#define NTP_SERVER_SECONDARY "time.nist.gov"   // Secondary NTP server
+#define NTP_GMT_OFFSET_SEC 3600                // GMT offset in seconds (e.g. +1h = 3600)
+#define NTP_DAYLIGHT_OFFSET_SEC 3600           // Daylight saving offset (1h = 3600)
+
+// Movement Bypass Configuration
+#define CONFIG_MOVEMENT_BYPASS_KEY "mov_bypass" // Preferences key for movement bypass

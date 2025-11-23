@@ -255,6 +255,13 @@ private:
     void handleApiBrightness();
     void handleApiLogs();
     void handleApiLogsDelete();
+    void handleApiBypassGet();
+    void handleApiBypassLight();
+    void handleApiBypassMovement();
+    void handleApiTimeWindowGet();
+    void handleApiTimeWindowPost();
+    void handleApiTimeWindowEnable();
+    void handleApiTimeWindowInvert();
     
     // HTML pages (stored in PROGMEM to save RAM)
     static const char* getConfigPageHTML();

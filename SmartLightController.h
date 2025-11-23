@@ -92,6 +92,69 @@ public:
     bool isLightSensorBypassed() const { return _lightSensorBypass; }
     
     /**
+     * @brief Enable/disable movement sensor bypass (for testing)
+     * When bypassed, movement sensor always returns "moving" condition
+     * @param bypass true to bypass movement sensor, false for normal operation
+     */
+    void setMovementBypass(bool bypass) { _movementBypass = bypass; }
+    
+    /**
+     * @brief Check if movement sensor is bypassed
+     * @return true if bypassed
+     */
+    bool isMovementBypassed() const { return _movementBypass; }
+    
+    /**
+     * @brief Enable/disable time window restriction
+     * @param enabled true to enable time window, false to disable
+     */
+    void setTimeWindowEnabled(bool enabled) { _timeWindowEnabled = enabled; }
+    
+    /**
+     * @brief Check if time window is enabled
+     * @return true if enabled
+     */
+    bool isTimeWindowEnabled() const { return _timeWindowEnabled; }
+    
+    /**
+     * @brief Set time window for LED operation
+     * @param startHour Hour to start allowing LED (0-23)
+     * @param endHour Hour to stop allowing LED (0-23)
+     */
+    void setTimeWindow(uint8_t startHour, uint8_t endHour);
+    
+    /**
+     * @brief Enable/disable time window inversion
+     * When inverted, LED operates OUTSIDE the configured window
+     * @param inverted true to invert logic, false for normal
+     */
+    void setTimeWindowInverted(bool inverted) { _timeWindowInverted = inverted; }
+    
+    /**
+     * @brief Check if time window is inverted
+     * @return true if inverted
+     */
+    bool isTimeWindowInverted() const { return _timeWindowInverted; }
+    
+    /**
+     * @brief Get time window start hour
+     * @return Start hour (0-23)
+     */
+    uint8_t getTimeWindowStart() const { return _timeWindowStart; }
+    
+    /**
+     * @brief Get time window end hour
+     * @return End hour (0-23)
+     */
+    uint8_t getTimeWindowEnd() const { return _timeWindowEnd; }
+    
+    /**
+     * @brief Check if current time is within the allowed window
+     * @return true if within window or window disabled
+     */
+    bool isWithinTimeWindow() const;
+    
+    /**
      * @brief Check if manual override is active
      * @return true if manual override is active
      */
@@ -172,6 +235,13 @@ private:
     
     // Bypass for testing
     bool _lightSensorBypass;
+    bool _movementBypass;
+    
+    // Time window configuration
+    bool _timeWindowEnabled;
+    bool _timeWindowInverted;  // If true, operate OUTSIDE window
+    uint8_t _timeWindowStart;  // 0-23 hour
+    uint8_t _timeWindowEnd;    // 0-23 hour
     
     // Helper methods
     void transitionTo(State newState);

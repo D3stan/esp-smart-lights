@@ -336,6 +336,13 @@ void WiFiManager::setupWebServer() {
     _webServer->on("/api/brightness", HTTP_POST, [this]() { handleApiBrightness(); });
     _webServer->on("/api/logs", HTTP_GET, [this]() { handleApiLogs(); });
     _webServer->on("/api/logs", HTTP_DELETE, [this]() { handleApiLogsDelete(); });
+    _webServer->on("/api/bypass", HTTP_GET, [this]() { handleApiBypassGet(); });
+    _webServer->on("/api/bypass/light", HTTP_POST, [this]() { handleApiBypassLight(); });
+    _webServer->on("/api/bypass/movement", HTTP_POST, [this]() { handleApiBypassMovement(); });
+    _webServer->on("/api/timewindow", HTTP_GET, [this]() { handleApiTimeWindowGet(); });
+    _webServer->on("/api/timewindow", HTTP_POST, [this]() { handleApiTimeWindowPost(); });
+    _webServer->on("/api/timewindow/enable", HTTP_POST, [this]() { handleApiTimeWindowEnable(); });
+    _webServer->on("/api/timewindow/invert", HTTP_POST, [this]() { handleApiTimeWindowInvert(); });
     
     _webServer->onNotFound([this]() { handleNotFound(); });
     
@@ -936,4 +943,264 @@ void WiFiManager::handleApiLogsDelete() {
         "{\"success\":true,\"message\":\"Logs cleared\"}");
 }
 
+void WiFiManager::handleApiBypassGet() {
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    if (!controller) {
+        _webServer->send(500, "application/json", 
+            "{\"error\":\"Controller not initialized\"}");
+        return;
+    }
+    
+    String json = "{";
+    json += "\"light_bypass\":" + String(controller->isLightSensorBypassed() ? "true" : "false") + ",";
+    json += "\"movement_bypass\":" + String(controller->isMovementBypassed() ? "true" : "false");
+    json += "}";
+    
+    _webServer->send(200, "application/json", json);
+}
+
+void WiFiManager::handleApiBypassLight() {
+    if (!_webServer->hasArg("plain")) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"No body provided\"}");
+        return;
+    }
+    
+    String body = _webServer->arg("plain");
+    bool bypass = false;
+    
+    // Parse bypass value (handle both with and without quotes)
+    int idx = body.indexOf("bypass");
+    if (idx >= 0) {
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            String valueStr = body.substring(colonIdx + 1);
+            // Check for true/false
+            bypass = (valueStr.indexOf("true") >= 0);
+        }
+    }
+    
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    if (!controller) {
+        _webServer->send(500, "application/json", 
+            "{\"success\":false,\"message\":\"Controller not initialized\"}");
+        return;
+    }
+    
+    controller->setLightSensorBypass(bypass);
+    controller->saveConfiguration();
+    
+    Serial.print("Light sensor bypass set to: ");
+    Serial.println(bypass ? "ON" : "OFF");
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Light bypass updated\"}");
+}
+
+void WiFiManager::handleApiBypassMovement() {
+    if (!_webServer->hasArg("plain")) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"No body provided\"}");
+        return;
+    }
+    
+    String body = _webServer->arg("plain");
+    bool bypass = false;
+    
+    // Parse bypass value (handle both with and without quotes)
+    int idx = body.indexOf("bypass");
+    if (idx >= 0) {
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            String valueStr = body.substring(colonIdx + 1);
+            // Check for true/false
+            bypass = (valueStr.indexOf("true") >= 0);
+        }
+    }
+    
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    if (!controller) {
+        _webServer->send(500, "application/json", 
+            "{\"success\":false,\"message\":\"Controller not initialized\"}");
+        return;
+    }
+    
+    controller->setMovementBypass(bypass);
+    controller->saveConfiguration();
+    
+    Serial.print("Movement sensor bypass set to: ");
+    Serial.println(bypass ? "ON" : "OFF");
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Movement bypass updated\"}");
+}
+
+void WiFiManager::handleApiTimeWindowGet() {
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    if (!controller) {
+        _webServer->send(500, "application/json", 
+            "{\"error\":\"Controller not initialized\"}");
+        return;
+    }
+    
+    String json = "{";
+    json += "\"enabled\":" + String(controller->isTimeWindowEnabled() ? "true" : "false") + ",";
+    json += "\"inverted\":" + String(controller->isTimeWindowInverted() ? "true" : "false") + ",";
+    json += "\"start_hour\":" + String(controller->getTimeWindowStart()) + ",";
+    json += "\"end_hour\":" + String(controller->getTimeWindowEnd());
+    json += "}";
+    
+    _webServer->send(200, "application/json", json);
+}
+
+void WiFiManager::handleApiTimeWindowPost() {
+    if (!_webServer->hasArg("plain")) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"No body provided\"}");
+        return;
+    }
+    
+    String body = _webServer->arg("plain");
+    int startHour = -1;
+    int endHour = -1;
+    
+    Serial.print("Received time window JSON: ");
+    Serial.println(body);
+    
+    // Parse start_hour
+    int idx = body.indexOf("start_hour");
+    if (idx >= 0) {
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            String valueStr = body.substring(colonIdx + 1);
+            int startIdx = 0;
+            while (startIdx < valueStr.length() && 
+                   !isdigit(valueStr.charAt(startIdx)) && 
+                   valueStr.charAt(startIdx) != '-') {
+                startIdx++;
+            }
+            if (startIdx < valueStr.length()) {
+                startHour = valueStr.substring(startIdx).toInt();
+            }
+        }
+    }
+    
+    // Parse end_hour
+    idx = body.indexOf("end_hour");
+    if (idx >= 0) {
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            String valueStr = body.substring(colonIdx + 1);
+            int startIdx = 0;
+            while (startIdx < valueStr.length() && 
+                   !isdigit(valueStr.charAt(startIdx)) && 
+                   valueStr.charAt(startIdx) != '-') {
+                startIdx++;
+            }
+            if (startIdx < valueStr.length()) {
+                endHour = valueStr.substring(startIdx).toInt();
+            }
+        }
+    }
+    
+    // Validate
+    if (startHour < 0 || startHour > 23 || endHour < 0 || endHour > 23) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"Invalid hours (must be 0-23)\"}");
+        return;
+    }
+    
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    if (!controller) {
+        _webServer->send(500, "application/json", 
+            "{\"success\":false,\"message\":\"Controller not initialized\"}");
+        return;
+    }
+    
+    controller->setTimeWindow(startHour, endHour);
+    controller->saveConfiguration();
+    
+    Serial.print("Time window set: ");
+    Serial.print(startHour);
+    Serial.print(":00 - ");
+    Serial.print(endHour);
+    Serial.println(":00");
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Time window updated\"}");
+}
+
+void WiFiManager::handleApiTimeWindowEnable() {
+    if (!_webServer->hasArg("plain")) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"No body provided\"}");
+        return;
+    }
+    
+    String body = _webServer->arg("plain");
+    bool enabled = false;
+    
+    // Parse enabled value
+    int idx = body.indexOf("enabled");
+    if (idx >= 0) {
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            String valueStr = body.substring(colonIdx + 1);
+            enabled = (valueStr.indexOf("true") >= 0);
+        }
+    }
+    
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    if (!controller) {
+        _webServer->send(500, "application/json", 
+            "{\"success\":false,\"message\":\"Controller not initialized\"}");
+        return;
+    }
+    
+    controller->setTimeWindowEnabled(enabled);
+    controller->saveConfiguration();
+    
+    Serial.print("Time window enabled: ");
+    Serial.println(enabled ? "YES" : "NO");
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Time window enable updated\"}");
+}
+
+void WiFiManager::handleApiTimeWindowInvert() {
+    if (!_webServer->hasArg("plain")) {
+        _webServer->send(400, "application/json", 
+            "{\"success\":false,\"message\":\"No body provided\"}");
+        return;
+    }
+    
+    String body = _webServer->arg("plain");
+    bool inverted = false;
+    
+    // Parse inverted value
+    int idx = body.indexOf("inverted");
+    if (idx >= 0) {
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            String valueStr = body.substring(colonIdx + 1);
+            inverted = (valueStr.indexOf("true") >= 0);
+        }
+    }
+    
+    auto* controller = static_cast<SmartLightController*>(_smartLightController);
+    if (!controller) {
+        _webServer->send(500, "application/json", 
+            "{\"success\":false,\"message\":\"Controller not initialized\"}");
+        return;
+    }
+    
+    controller->setTimeWindowInverted(inverted);
+    controller->saveConfiguration();
+    
+    Serial.print("Time window inverted: ");
+    Serial.println(inverted ? "YES (operate OUTSIDE window)" : "NO (operate INSIDE window)");
+    
+    _webServer->send(200, "application/json", 
+        "{\"success\":true,\"message\":\"Time window inversion updated\"}");
+}
 

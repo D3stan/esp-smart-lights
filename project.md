@@ -859,7 +859,7 @@ I seguenti comandi sono stati rimossi (funzionalità ora disponibili solo via we
 | `L<val>` | Imposta luminosità LED | Dashboard → Controllo LED → Slider |
 | `d<val>` | Imposta ritardo spegnimento | Dashboard → Configurazione |
 | `A` | Toggle auto mode | Dashboard → Controllo LED → Mode |
-| `B` | Toggle light sensor bypass | Bottone fisico BLUE |
+| `B` | Toggle light sensor bypass | Bottone fisico BLUE o Dashboard → Bypass Sensori |
 | `O` | Forza LED ON | Dashboard → Controllo LED → ON |
 | `F` | Forza LED OFF | Dashboard → Controllo LED → OFF |
 | `R` | Ritorna a modo auto | Dashboard → Controllo LED → AUTO |
@@ -874,5 +874,205 @@ I seguenti comandi sono stati rimossi (funzionalità ora disponibili solo via we
 | `U` | Mostra stato OTA | Dashboard → OTA |
 | `T` | Trigger OTA rollback | Dashboard → OTA |
 | `h` | Mostra help | *Rimosso* |
+
+---
+
+## 12. Nuove Funzionalità (Dicembre 2025)
+
+### 12.1. Bypass Sensore Movimento
+
+Oltre al bypass del sensore di luce già esistente, è stato aggiunto il **bypass del sensore di movimento**.
+
+**Funzionalità:**
+- Quando attivato, il sistema considera sempre la condizione "in movimento" come VERA
+- Utile per testare il sistema senza dover muovere fisicamente il dispositivo
+- Configurabile tramite web dashboard nella sezione "Bypass Sensori"
+- Lo stato viene salvato in Preferences e persistente tra riavvii
+
+**Implementazione:**
+- Nuovo metodo `setMovementBypass(bool)` in `SmartLightController`
+- Nuovo endpoint API: `POST /api/bypass/movement` con body `{"bypass": true/false}`
+- Chiave Preferences: `mov_bypass` nel namespace `light_config`
+
+**Logica di controllo aggiornata:**
+```
+LED si accende SE:
+  (Notte O Light Bypass) 
+  AND 
+  (Movimento O Movement Bypass)
+  AND
+  (Dentro finestra oraria O finestra disabilitata)
+```
+
+### 12.2. Finestra Oraria (Time Window)
+
+È stata implementata una **restrizione oraria configurabile** per l'accensione automatica del LED.
+
+**Funzionalità:**
+- Permette di limitare l'accensione del LED solo in una fascia oraria specifica
+- Completamente disattivabile (default: disabilitato)
+- Configurabile tramite due parametri:
+  * **Start Hour** (0-23): Ora di inizio della finestra (es. 7 = 7:00)
+  * **End Hour** (0-23): Ora di fine della finestra (es. 17 = 17:00)
+- Supporta finestre "wrap-around" (es. 22:00 - 6:00 per operazione notturna)
+- Utilizza NTP per sincronizzare l'ora del sistema
+
+**Esempio d'uso:**
+- Configurazione: Start=7, End=17, Enabled=true
+- Risultato: LED può accendersi SOLO tra le 7:00 e le 16:59
+- Utile per robot tosaerba che opera solo di giorno
+
+**Implementazione:**
+
+**Nuove variabili in SmartLightController:**
+- `_timeWindowEnabled`: Abilita/disabilita la restrizione
+- `_timeWindowStart`: Ora di inizio (0-23)
+- `_timeWindowEnd`: Ora di fine (0-23)
+
+**Nuovi metodi pubblici:**
+```cpp
+void setTimeWindowEnabled(bool enabled);
+bool isTimeWindowEnabled() const;
+void setTimeWindow(uint8_t startHour, uint8_t endHour);
+uint8_t getTimeWindowStart() const;
+uint8_t getTimeWindowEnd() const;
+bool isWithinTimeWindow() const;
+```
+
+**Logica di controllo:**
+```cpp
+bool SmartLightController::isWithinTimeWindow() const {
+    // Se disabilitato, ritorna sempre true
+    if (!_timeWindowEnabled) return true;
+    
+    // Ottiene ora corrente da NTP
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        // Fail-safe: se ora non disponibile, permette operazione
+        return true;
+    }
+    
+    uint8_t currentHour = timeinfo.tm_hour;
+    
+    // Caso normale: start < end (es. 7:00 - 17:00)
+    if (_timeWindowStart < _timeWindowEnd) {
+        return (currentHour >= _timeWindowStart && currentHour < _timeWindowEnd);
+    }
+    // Caso wrap-around: start > end (es. 22:00 - 6:00)
+    else if (_timeWindowStart > _timeWindowEnd) {
+        return (currentHour >= _timeWindowStart || currentHour < _timeWindowEnd);
+    }
+    // Caso edge: start == end (24h o disabilitato)
+    else {
+        return true;
+    }
+}
+```
+
+**Persistenza dati:**
+- Tutte le configurazioni vengono salvate in Preferences
+- Chiavi utilizzate:
+  * `tw_enabled`: bool - Finestra abilitata
+  * `tw_start`: uint8_t - Ora inizio (0-23)
+  * `tw_end`: uint8_t - Ora fine (0-23)
+
+**Sincronizzazione NTP:**
+- Server NTP configurabili in `config.h`:
+  * `NTP_SERVER_PRIMARY`: "pool.ntp.org" (default)
+  * `NTP_SERVER_SECONDARY`: "time.nist.gov" (default)
+  * `NTP_GMT_OFFSET_SEC`: Offset GMT in secondi (default: 3600 = +1h)
+  * `NTP_DAYLIGHT_OFFSET_SEC`: Offset ora legale (default: 3600)
+- Sincronizzazione automatica quando il WiFi si connette
+- Utilizza la funzione `configTime()` di ESP32
+
+**Interfaccia Web:**
+
+Nuova sezione "🕐 Finestra Oraria" nella dashboard:
+- Toggle DISABILITATO/ABILITATO
+- Input numerico per ora inizio (0-23)
+- Input numerico per ora fine (0-23)
+- Pulsante "Salva Finestra Oraria"
+
+**API Endpoints:**
+```
+GET  /api/timewindow              → Ottiene configurazione corrente
+                                     Response: {"enabled": bool, "start_hour": int, "end_hour": int}
+
+POST /api/timewindow              → Imposta start/end hour
+                                     Body: {"start_hour": int, "end_hour": int}
+
+POST /api/timewindow/enable       → Abilita/disabilita finestra
+                                     Body: {"enabled": bool}
+```
+
+### 12.3. Interfaccia Dashboard Aggiornata
+
+**Nuova sezione "Bypass Sensori":**
+```
+┌─────────────────────────────────────┐
+│ 🎛️ Bypass Sensori (Test Mode)      │
+├─────────────────────────────────────┤
+│ Bypass Sensore Luce:                │
+│ [NORMALE] [BYPASS (NOTTE)] ✓        │
+│                                      │
+│ Bypass Sensore Movimento:            │
+│ [NORMALE] [BYPASS (MOVIMENTO)] ✓    │
+└─────────────────────────────────────┘
+```
+
+**Nuova sezione "Finestra Oraria":**
+```
+┌─────────────────────────────────────┐
+│ 🕐 Finestra Oraria                  │
+├─────────────────────────────────────┤
+│ Abilita Restrizione Oraria:         │
+│ [DISABILITATO] [ABILITATO] ✓        │
+│                                      │
+│ Ora Inizio (24h):                   │
+│ [  7  ] :00                          │
+│                                      │
+│ Ora Fine (24h):                     │
+│ [ 17  ] :00                          │
+│                                      │
+│ [🕐 Salva Finestra Oraria]          │
+└─────────────────────────────────────┘
+```
+
+### 12.4. Casi d'Uso
+
+**Scenario 1: Robot tosaerba diurno**
+- Time Window: 7:00 - 19:00 (abilitato)
+- Risultato: LED si accende solo se è notte, c'è movimento E l'ora è tra 7:00 e 18:59
+- Vantaggio: Evita che il LED si accenda di notte se il robot si muove accidentalmente
+
+**Scenario 2: Test senza movimento fisico**
+- Movement Bypass: ATTIVO
+- Light Bypass: ATTIVO
+- Risultato: LED sempre acceso (utile per test hardware)
+
+**Scenario 3: Robot notturno**
+- Time Window: 20:00 - 6:00 (abilitato)
+- Risultato: LED può accendersi solo nelle ore notturne (20:00-05:59)
+
+**Scenario 4: Operazione 24/7**
+- Time Window: DISABILITATO (default)
+- Risultato: Nessuna restrizione oraria, funziona come prima
+
+### 12.5. Note Tecniche
+
+**Gestione Fallback NTP:**
+- Se `getLocalTime()` fallisce (es. NTP non sincronizzato), il sistema permette comunque l'operazione
+- Questo garantisce che il robot continui a funzionare anche senza sincronizzazione oraria
+- Log di warning viene stampato su Serial per debugging
+
+**Validazione Input:**
+- Le ore vengono validate nel range 0-23
+- Valori fuori range vengono clampati automaticamente
+- La configurazione viene sempre salvata in Preferences dopo ogni modifica
+
+**Compatibilità:**
+- Tutte le configurazioni precedenti rimangono valide
+- I valori di default garantiscono comportamento identico al precedente se non configurato
+- Nessun breaking change per utenti esistenti
 
 ---
