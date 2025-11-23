@@ -168,31 +168,23 @@ void setup() {
 		delay(300);
 		ledController.turnOff();
 		delay(300);
-		// Ensure LED is completely off after test
-		ledController.setBrightness(0);
-		Serial.println("LED test complete - LED OFF");
+		Serial.println("LED test complete");
 	}
 	Serial.println("=================================================\n");
 	
 	// Initialize Smart Light Controller
 	Serial.println("\n========== INITIALIZING SMART LIGHT CONTROLLER ==========");
-	smartLight.begin(LED_SHUTOFF_DELAY_MS); // Load config and set shutoff delay
-    // Light sensor bypass is OFF by default (normal operation)
+	smartLight.begin(LED_SHUTOFF_DELAY_MS);
 	
-	// Load saved brightness values from Preferences
+	// Load saved RGB brightness from Preferences (LED brightness is managed by SmartLightController)
 	Preferences prefs;
-	prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
-	uint8_t savedLedBrightness = prefs.getUChar(CONFIG_LED_BRIGHTNESS_KEY, DEFAULT_LED_BRIGHTNESS);
+	prefs.begin(CONFIG_PREFS_NAMESPACE, true);
 	currentRgbBrightness = prefs.getUChar(CONFIG_RGB_BRIGHTNESS_KEY, DEFAULT_RGB_BRIGHTNESS);
 	prefs.end();
 	
-	ledController.setBrightness(savedLedBrightness);
-	Serial.print("Loaded LED brightness: "); Serial.println(savedLedBrightness);
-	Serial.print("Loaded RGB brightness: "); Serial.println(currentRgbBrightness);
 	Serial.println("Smart Light Controller initialized");
 	Serial.print("Auto Mode: "); Serial.println(smartLight.isAutoModeEnabled() ? "ENABLED" : "DISABLED");
 	Serial.print("Shutoff Delay: "); Serial.print(smartLight.getShutoffDelay() / 1000); Serial.println(" seconds");
-	Serial.println("Logic: LED ON when (Night AND Movement)");
 	Serial.println("=========================================================\n");
 	
 	// Initialize Event Logger
@@ -241,13 +233,8 @@ void setup() {
 	Serial.println("==============================================\n");
 	
 	// Configure NTP for timestamps (will sync when WiFi connects)
-	configTime(3600, 3600, "pool.ntp.org", "time.nist.gov");  // GMT+1 (Italy), DST +1h
+	configTime(3600, 3600, "pool.ntp.org", "time.nist.gov");
 	Serial.println("NTP time sync configured (will sync when WiFi connected)");
-	
-	// Final synchronization: ensure LED is OFF and state is consistent
-	ledController.turnOff();
-	ledController.setBrightness(0);
-	Serial.println("\n[STARTUP] Final check: LED is OFF, ready for automatic control");
 
 }
 

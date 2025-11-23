@@ -37,26 +37,10 @@ void SmartLightController::begin(unsigned long shutoffDelayMs) {
     _manualOverride = false;
     _autoModeEnabled = true;
     _lastLEDState = false;
-    _lightSensorBypass = false;  // Ensure bypass is OFF at startup
+    _lightSensorBypass = false;
     
-    // Force LED off at startup - set brightness to 0 explicitly
+    // Force LED off at startup
     _ledController.turnOff();
-    _ledController.setBrightness(0);  // Double-ensure PWM is 0
-    
-    // Verify LED is really off
-    if (_ledController.isOn()) {
-        Serial.println("[SmartLight] WARNING: LED is still on after turnOff(), forcing brightness to 0...");
-        _ledController.setBrightness(0);
-    }
-    
-    Serial.println("[SmartLight] Controller initialized:");
-    Serial.println("  - Mode: AUTO");
-    Serial.println("  - State: OFF");
-    Serial.println("  - LED: OFF (verified)");
-    Serial.print("  - LED Brightness Setting: ");
-    Serial.println(_ledController.getBrightness());
-    Serial.print("  - Light Sensor Bypass: ");
-    Serial.println(_lightSensorBypass ? "ON" : "OFF");
 }
 
 void SmartLightController::update() {
@@ -89,11 +73,6 @@ bool SmartLightController::shouldLEDBeOn() const {
 void SmartLightController::handleStateOff() {
     // Check if conditions are met to turn on
     if (shouldLEDBeOn()) {
-        Serial.println("[SmartLight] Conditions met, transitioning OFF → ON");
-        Serial.print("  - Is Night (or bypassed): ");
-        Serial.println(_lightSensorBypass ? "BYPASSED" : (_lightSensor.isNight() ? "YES" : "NO"));
-        Serial.print("  - Is Moving: ");
-        Serial.println(_motionDetector.isMoving() ? "YES" : "NO");
         transitionTo(State::ON);
     }
 }
@@ -148,19 +127,9 @@ void SmartLightController::transitionTo(State newState) {
             {
                 // Load saved brightness from Preferences
                 Preferences prefs;
-                prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
+                prefs.begin(CONFIG_PREFS_NAMESPACE, true);
                 uint8_t brightness = prefs.getUChar(CONFIG_LED_BRIGHTNESS_KEY, DEFAULT_LED_BRIGHTNESS);
                 prefs.end();
-                
-                Serial.println("[SmartLight] Transitioning to ON state");
-                Serial.print("  - Brightness: ");
-                Serial.println(brightness);
-                Serial.print("  - Is Night: ");
-                Serial.println(_lightSensor.isNight() ? "YES" : "NO");
-                Serial.print("  - Is Moving: ");
-                Serial.println(_motionDetector.isMoving() ? "YES" : "NO");
-                Serial.print("  - Light Bypass: ");
-                Serial.println(_lightSensorBypass ? "YES" : "NO");
                 
                 _ledController.turnOn(brightness);
                 _countdownActive = false;
