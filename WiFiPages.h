@@ -898,6 +898,16 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
             // Wi-Fi RSSI
             document.getElementById('wifiRSSI').textContent = data.rssi;
             
+            // Update brightness values if available (don't override if user is adjusting)
+            if (data.led_brightness !== undefined && !document.getElementById('ledBrightness').matches(':active')) {
+                document.getElementById('ledBrightness').value = data.led_brightness;
+                updateBrightnessDisplay('led', data.led_brightness);
+            }
+            if (data.rgb_brightness !== undefined && !document.getElementById('rgbBrightness').matches(':active')) {
+                document.getElementById('rgbBrightness').value = data.rgb_brightness;
+                updateBrightnessDisplay('rgb', data.rgb_brightness);
+            }
+            
             // Update mode buttons
             updateModeButtons(data.led_mode);
         }
@@ -1012,6 +1022,19 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
                 document.getElementById('shutoffDelay').value = data.shutoff_delay / 1000; // Convert to seconds
             } catch (error) {
                 console.error('Error loading config:', error);
+            }
+            
+            // Load brightness values
+            try {
+                const response = await fetch('/api/brightness');
+                const data = await response.json();
+                
+                document.getElementById('ledBrightness').value = data.led_brightness;
+                document.getElementById('rgbBrightness').value = data.rgb_brightness;
+                updateBrightnessDisplay('led', data.led_brightness);
+                updateBrightnessDisplay('rgb', data.rgb_brightness);
+            } catch (error) {
+                console.error('Error loading brightness:', error);
             }
         }
         

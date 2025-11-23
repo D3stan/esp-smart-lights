@@ -251,6 +251,7 @@ private:
     void handleApiConfig();
     void handleApiConfigPost();
     void handleApiLedOverride();
+    void handleApiBrightnessGet();
     void handleApiBrightness();
     void handleApiLogs();
     void handleApiLogsDelete();

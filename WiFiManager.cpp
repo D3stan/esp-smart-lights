@@ -332,6 +332,7 @@ void WiFiManager::setupWebServer() {
     _webServer->on("/api/config", HTTP_GET, [this]() { handleApiConfig(); });
     _webServer->on("/api/config", HTTP_POST, [this]() { handleApiConfigPost(); });
     _webServer->on("/api/led/override", HTTP_POST, [this]() { handleApiLedOverride(); });
+    _webServer->on("/api/brightness", HTTP_GET, [this]() { handleApiBrightnessGet(); });
     _webServer->on("/api/brightness", HTTP_POST, [this]() { handleApiBrightness(); });
     _webServer->on("/api/logs", HTTP_GET, [this]() { handleApiLogs(); });
     _webServer->on("/api/logs", HTTP_DELETE, [this]() { handleApiLogsDelete(); });
@@ -569,9 +570,15 @@ void WiFiManager::handleApiStatus() {
     }
     // else: auto mode active, ledMode = "auto"
     
+    // Get current brightness values
+    uint8_t ledBrightness = ledController->getBrightness();
+    uint8_t rgbBrightness = (_rgbBrightness != nullptr) ? *_rgbBrightness : RGB_BRIGHTNESS;
+    
     String json = "{";
     json += "\"led_on\":" + String(ledIsOn ? "true" : "false") + ",";
     json += "\"led_mode\":\"" + ledMode + "\",";
+    json += "\"led_brightness\":" + String(ledBrightness) + ",";
+    json += "\"rgb_brightness\":" + String(rgbBrightness) + ",";
     json += "\"lux\":" + String(lightSensor->getLastLux(), 1) + ",";
     json += "\"motion\":" + String(motionDetector->isMoving() ? "true" : "false") + ",";
     json += "\"rssi\":" + String(getRSSI());
@@ -732,6 +739,39 @@ void WiFiManager::handleApiLedOverride() {
     
     _webServer->send(200, "application/json", 
         "{\"success\":true,\"message\":\"Mode updated\"}");
+}
+
+void WiFiManager::handleApiBrightnessGet() {
+    // Get current brightness values from LED controller and preferences
+    auto* ledController = static_cast<LEDController*>(_ledController);
+    
+    if (!ledController) {
+        _webServer->send(500, "application/json", 
+            "{\"error\":\"LED controller not initialized\"}");
+        return;
+    }
+    
+    // Read current brightness from LED controller
+    uint8_t ledBrightness = ledController->getBrightness();
+    
+    // Read RGB brightness from global variable or preferences
+    uint8_t rgbBrightness = RGB_BRIGHTNESS;
+    if (_rgbBrightness != nullptr) {
+        rgbBrightness = *_rgbBrightness;
+    } else {
+        // Fallback to preferences if pointer not set
+        Preferences prefs;
+        prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
+        rgbBrightness = prefs.getUChar(CONFIG_RGB_BRIGHTNESS_KEY, RGB_BRIGHTNESS);
+        prefs.end();
+    }
+    
+    String json = "{";
+    json += "\"led_brightness\":" + String(ledBrightness) + ",";
+    json += "\"rgb_brightness\":" + String(rgbBrightness);
+    json += "}";
+    
+    _webServer->send(200, "application/json", json);
 }
 
 void WiFiManager::handleApiBrightness() {
