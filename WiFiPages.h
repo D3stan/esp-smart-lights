@@ -898,16 +898,6 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
             // Wi-Fi RSSI
             document.getElementById('wifiRSSI').textContent = data.rssi;
             
-            // Update brightness values if available (don't override if user is adjusting)
-            if (data.led_brightness !== undefined && !document.getElementById('ledBrightness').matches(':active')) {
-                document.getElementById('ledBrightness').value = data.led_brightness;
-                updateBrightnessDisplay('led', data.led_brightness);
-            }
-            if (data.rgb_brightness !== undefined && !document.getElementById('rgbBrightness').matches(':active')) {
-                document.getElementById('rgbBrightness').value = data.rgb_brightness;
-                updateBrightnessDisplay('rgb', data.rgb_brightness);
-            }
-            
             // Update mode buttons
             updateModeButtons(data.led_mode);
         }
@@ -987,6 +977,14 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
         
         // Save brightness settings
         async function saveBrightness() {
+            // Mark as user interaction to prevent mode updates during save
+            userInteracting = true;
+            
+            // Clear any existing timeout
+            if (interactionTimeout) {
+                clearTimeout(interactionTimeout);
+            }
+            
             const brightness = {
                 led_brightness: parseInt(document.getElementById('ledBrightness').value),
                 rgb_brightness: parseInt(document.getElementById('rgbBrightness').value)
@@ -1001,12 +999,34 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
                 
                 const data = await response.json();
                 if (data.success) {
+                    // Reload brightness values to confirm they were saved
+                    await loadBrightnessValues();
                     alert('✓ Luminosità aggiornata con successo!');
                 } else {
                     alert('Errore: ' + data.message);
                 }
             } catch (error) {
                 alert('Errore di comunicazione: ' + error.message);
+            } finally {
+                // Allow mode updates again after 2 seconds
+                interactionTimeout = setTimeout(() => {
+                    userInteracting = false;
+                }, 2000);
+            }
+        }
+        
+        // Load brightness values
+        async function loadBrightnessValues() {
+            try {
+                const response = await fetch('/api/brightness');
+                const data = await response.json();
+                
+                document.getElementById('ledBrightness').value = data.led_brightness;
+                document.getElementById('rgbBrightness').value = data.rgb_brightness;
+                updateBrightnessDisplay('led', data.led_brightness);
+                updateBrightnessDisplay('rgb', data.rgb_brightness);
+            } catch (error) {
+                console.error('Error loading brightness:', error);
             }
         }
         
@@ -1025,17 +1045,7 @@ const char WIFI_DASHBOARD_PAGE[] PROGMEM = R"rawliteral(
             }
             
             // Load brightness values
-            try {
-                const response = await fetch('/api/brightness');
-                const data = await response.json();
-                
-                document.getElementById('ledBrightness').value = data.led_brightness;
-                document.getElementById('rgbBrightness').value = data.rgb_brightness;
-                updateBrightnessDisplay('led', data.led_brightness);
-                updateBrightnessDisplay('rgb', data.rgb_brightness);
-            } catch (error) {
-                console.error('Error loading brightness:', error);
-            }
+            await loadBrightnessValues();
         }
         
         // Save configuration

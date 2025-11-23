@@ -14,9 +14,9 @@ public:
     /**
      * @brief Constructor
      * @param pin GPIO pin connected to MOSFET gate
-     * @param pwmChannel PWM channel to use (ESP32 has 16 channels, 0-15)
+     * @param invertPwm Set to true if MOSFET logic is inverted (default: false)
      */
-    explicit LEDController(uint8_t pin);
+    explicit LEDController(uint8_t pin, bool invertPwm = false);
     
     /**
      * @brief Initialize the LED controller
@@ -69,6 +69,7 @@ private:
     uint8_t _currentBrightness;
     uint16_t _maxValue;  // Maximum PWM value based on resolution
     bool _isInitialized;
+    bool _invertPwm;     // Invert PWM output (for inverted MOSFET logic)
     
     // Convert brightness to PWM duty cycle
     uint16_t brightnessToDuty(uint8_t brightness) const;

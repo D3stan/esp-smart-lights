@@ -168,7 +168,9 @@ void setup() {
 		delay(300);
 		ledController.turnOff();
 		delay(300);
-		Serial.println("LED test complete");
+		// Ensure LED is completely off after test
+		ledController.setBrightness(0);
+		Serial.println("LED test complete - LED OFF");
 	}
 	Serial.println("=================================================\n");
 	
@@ -241,6 +243,11 @@ void setup() {
 	// Configure NTP for timestamps (will sync when WiFi connects)
 	configTime(3600, 3600, "pool.ntp.org", "time.nist.gov");  // GMT+1 (Italy), DST +1h
 	Serial.println("NTP time sync configured (will sync when WiFi connected)");
+	
+	// Final synchronization: ensure LED is OFF and state is consistent
+	ledController.turnOff();
+	ledController.setBrightness(0);
+	Serial.println("\n[STARTUP] Final check: LED is OFF, ready for automatic control");
 
 }
 

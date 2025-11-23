@@ -12,6 +12,7 @@
 // LED Strip Control (via MOSFET IRLZ44N)
 #define LED_MOSFET_PIN 14  // PWM output to MOSFET gate
 #define LED_SHUTOFF_DELAY_MS 10000  // Default shutoff delay (10 seconds)
+#define LED_PWM_INVERTED false  // Set to true if MOSFET logic is inverted (HIGH=OFF, LOW=ON)
 
 // RGB Led
 #define BTN_R 48

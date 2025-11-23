@@ -570,15 +570,9 @@ void WiFiManager::handleApiStatus() {
     }
     // else: auto mode active, ledMode = "auto"
     
-    // Get current brightness values
-    uint8_t ledBrightness = ledController->getBrightness();
-    uint8_t rgbBrightness = (_rgbBrightness != nullptr) ? *_rgbBrightness : RGB_BRIGHTNESS;
-    
     String json = "{";
     json += "\"led_on\":" + String(ledIsOn ? "true" : "false") + ",";
     json += "\"led_mode\":\"" + ledMode + "\",";
-    json += "\"led_brightness\":" + String(ledBrightness) + ",";
-    json += "\"rgb_brightness\":" + String(rgbBrightness) + ",";
     json += "\"lux\":" + String(lightSensor->getLastLux(), 1) + ",";
     json += "\"motion\":" + String(motionDetector->isMoving() ? "true" : "false") + ",";
     json += "\"rssi\":" + String(getRSSI());
@@ -627,22 +621,44 @@ void WiFiManager::handleApiConfigPost() {
     // Parse JSON manually (Arduino JSON library might not be available)
     String body = _webServer->arg("plain");
     
+    Serial.print("Received config JSON: ");
+    Serial.println(body);
+    
     // Extract values (simple parsing, assuming valid JSON)
     float luxThresh = -1, accelThresh = -1, gyroThresh = -1;
     unsigned long shutoff = 0;
     
-    int idx;
-    if ((idx = body.indexOf("\"lux_threshold\":")) >= 0) {
-        luxThresh = body.substring(idx + 16).toFloat();
+    // Helper lambda to extract numeric value after a key
+    auto extractNumeric = [&body](const char* key) -> String {
+        int idx = body.indexOf(key);
+        if (idx >= 0) {
+            int colonIdx = body.indexOf(":", idx);
+            if (colonIdx >= 0) {
+                String valueStr = body.substring(colonIdx + 1);
+                // Skip whitespace
+                int startIdx = 0;
+                while (startIdx < valueStr.length() && 
+                       (valueStr.charAt(startIdx) == ' ' || valueStr.charAt(startIdx) == '\t')) {
+                    startIdx++;
+                }
+                return valueStr.substring(startIdx);
+            }
+        }
+        return "";
+    };
+    
+    String val;
+    if ((val = extractNumeric("lux_threshold")) != "") {
+        luxThresh = val.toFloat();
     }
-    if ((idx = body.indexOf("\"accel_threshold\":")) >= 0) {
-        accelThresh = body.substring(idx + 18).toFloat();
+    if ((val = extractNumeric("accel_threshold")) != "") {
+        accelThresh = val.toFloat();
     }
-    if ((idx = body.indexOf("\"gyro_threshold\":")) >= 0) {
-        gyroThresh = body.substring(idx + 17).toFloat();
+    if ((val = extractNumeric("gyro_threshold")) != "") {
+        gyroThresh = val.toFloat();
     }
-    if ((idx = body.indexOf("\"shutoff_delay\":")) >= 0) {
-        shutoff = body.substring(idx + 16).toInt();
+    if ((val = extractNumeric("shutoff_delay")) != "") {
+        shutoff = val.toInt();
     }
     
     // Save to preferences
@@ -701,11 +717,35 @@ void WiFiManager::handleApiLedOverride() {
     String body = _webServer->arg("plain");
     String mode = "";
     
-    int idx = body.indexOf("\"mode\":\"");
+    Serial.print("Received LED override JSON: ");
+    Serial.println(body);
+    
+    // Extract mode value (handle both with and without quotes)
+    int idx = body.indexOf("mode");
     if (idx >= 0) {
-        int startIdx = idx + 8;
-        int endIdx = body.indexOf("\"", startIdx);
-        mode = body.substring(startIdx, endIdx);
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            String valueStr = body.substring(colonIdx + 1);
+            // Skip whitespace and quotes
+            int startIdx = 0;
+            while (startIdx < valueStr.length() && 
+                   (valueStr.charAt(startIdx) == ' ' || 
+                    valueStr.charAt(startIdx) == '\t' ||
+                    valueStr.charAt(startIdx) == '"')) {
+                startIdx++;
+            }
+            // Find end (quote, comma, or brace)
+            int endIdx = startIdx;
+            while (endIdx < valueStr.length() && 
+                   valueStr.charAt(endIdx) != '"' &&
+                   valueStr.charAt(endIdx) != ',' &&
+                   valueStr.charAt(endIdx) != '}') {
+                endIdx++;
+            }
+            mode = valueStr.substring(startIdx, endIdx);
+            Serial.print("Parsed mode: ");
+            Serial.println(mode);
+        }
     }
     
     auto* controller = static_cast<SmartLightController*>(_smartLightController);
@@ -742,28 +782,19 @@ void WiFiManager::handleApiLedOverride() {
 }
 
 void WiFiManager::handleApiBrightnessGet() {
-    // Get current brightness values from LED controller and preferences
-    auto* ledController = static_cast<LEDController*>(_ledController);
+    // Read brightness values from Preferences (not from LED controller)
+    // This ensures we always get the saved values, even if LED is off
+    Preferences prefs;
+    prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
     
-    if (!ledController) {
-        _webServer->send(500, "application/json", 
-            "{\"error\":\"LED controller not initialized\"}");
-        return;
-    }
+    uint8_t ledBrightness = prefs.getUChar(CONFIG_LED_BRIGHTNESS_KEY, DEFAULT_LED_BRIGHTNESS);
+    uint8_t rgbBrightness = prefs.getUChar(CONFIG_RGB_BRIGHTNESS_KEY, RGB_BRIGHTNESS);
     
-    // Read current brightness from LED controller
-    uint8_t ledBrightness = ledController->getBrightness();
+    prefs.end();
     
-    // Read RGB brightness from global variable or preferences
-    uint8_t rgbBrightness = RGB_BRIGHTNESS;
+    // Override RGB with global variable if available
     if (_rgbBrightness != nullptr) {
         rgbBrightness = *_rgbBrightness;
-    } else {
-        // Fallback to preferences if pointer not set
-        Preferences prefs;
-        prefs.begin(CONFIG_PREFS_NAMESPACE, true);  // Read-only
-        rgbBrightness = prefs.getUChar(CONFIG_RGB_BRIGHTNESS_KEY, RGB_BRIGHTNESS);
-        prefs.end();
     }
     
     String json = "{";
@@ -785,27 +816,75 @@ void WiFiManager::handleApiBrightness() {
     int ledBrightness = -1;
     int rgbBrightness = -1;
     
-    // Parse LED strip brightness
-    int idx = body.indexOf("\"led_brightness\":");
+    Serial.print("Received brightness JSON: ");
+    Serial.println(body);
+    
+    // Parse LED strip brightness (handle both with and without quotes in keys)
+    int idx = body.indexOf("led_brightness");
     if (idx >= 0) {
-        ledBrightness = body.substring(idx + 18).toInt();
+        // Find the colon after the key
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            // Extract substring after colon and parse
+            String valueStr = body.substring(colonIdx + 1);
+            // Find first digit or minus sign
+            int startIdx = 0;
+            while (startIdx < valueStr.length() && 
+                   !isdigit(valueStr.charAt(startIdx)) && 
+                   valueStr.charAt(startIdx) != '-') {
+                startIdx++;
+            }
+            if (startIdx < valueStr.length()) {
+                ledBrightness = valueStr.substring(startIdx).toInt();
+                Serial.print("Parsed led_brightness: ");
+                Serial.println(ledBrightness);
+            }
+        }
     }
     
-    // Parse RGB LED brightness
-    idx = body.indexOf("\"rgb_brightness\":");
+    // Parse RGB LED brightness (handle both with and without quotes in keys)
+    idx = body.indexOf("rgb_brightness");
     if (idx >= 0) {
-        rgbBrightness = body.substring(idx + 18).toInt();
+        // Find the colon after the key
+        int colonIdx = body.indexOf(":", idx);
+        if (colonIdx >= 0) {
+            // Extract substring after colon and parse
+            String valueStr = body.substring(colonIdx + 1);
+            // Find first digit or minus sign
+            int startIdx = 0;
+            while (startIdx < valueStr.length() && 
+                   !isdigit(valueStr.charAt(startIdx)) && 
+                   valueStr.charAt(startIdx) != '-') {
+                startIdx++;
+            }
+            if (startIdx < valueStr.length()) {
+                rgbBrightness = valueStr.substring(startIdx).toInt();
+                Serial.print("Parsed rgb_brightness: ");
+                Serial.println(rgbBrightness);
+            }
+        }
     }
     
     bool updated = false;
     Preferences prefs;
     prefs.begin(CONFIG_PREFS_NAMESPACE, false);  // Read-write
     
-    // Save LED strip brightness (don't apply it, just save for later use)
+    // Cast to get LED controller
+    auto* ledController = static_cast<LEDController*>(_ledController);
+    
+    // Save AND apply LED strip brightness immediately
     if (ledBrightness >= 0 && ledBrightness <= 255) {
         prefs.putUChar(CONFIG_LED_BRIGHTNESS_KEY, ledBrightness);
-        Serial.print("Saved LED strip brightness: ");
-        Serial.println(ledBrightness);
+        
+        // Apply brightness if LED is currently on
+        if (ledController && ledController->isOn()) {
+            ledController->setBrightness(ledBrightness);
+            Serial.print("Applied LED strip brightness: ");
+            Serial.println(ledBrightness);
+        } else {
+            Serial.print("Saved LED strip brightness (will apply when LED turns on): ");
+            Serial.println(ledBrightness);
+        }
         updated = true;
     }
     
