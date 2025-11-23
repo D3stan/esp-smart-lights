@@ -14,9 +14,8 @@ public:
     /**
      * @brief Constructor
      * @param pin GPIO pin connected to MOSFET gate
-     * @param invertPwm Set to true if MOSFET logic is inverted (default: false)
      */
-    explicit LEDController(uint8_t pin, bool invertPwm = false);
+    explicit LEDController(uint8_t pin);
     
     /**
      * @brief Initialize the LED controller
